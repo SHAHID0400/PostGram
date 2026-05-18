@@ -85,15 +85,22 @@ const Header = () => {
           </ul>
           {open && (
             <div className="absolute top-16 right-4 bg-slate-800 p-4 rounded-lg flex flex-col gap-4 sm:hidden">
-              <a href="/" className="text-white">
-                Home
-              </a>
-              <a href="/login" className="text-white">
-                Login
-              </a>
-              <a href="/signup" className="text-white">
-                Signup
-              </a>
+              {navItems.map((item) =>
+                item.active ? (
+                  <button
+                    key={item.name}
+                    onClick={() => {
+                      navigate(item.slug);
+                      setopen(false);
+                    }}
+                    className="text-white text-left"
+                  >
+                    {item.name}
+                  </button>
+                ) : null,
+              )}
+
+              {authStatus && <Logoutbtn />}
             </div>
           )}
         </nav>
