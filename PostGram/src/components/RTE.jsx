@@ -29,7 +29,7 @@ const RTE = ({ name, control, label, defaultValue = "" }) => {
         name={name || "content"}
         control={control}
         render={({ field: { onChange } }) => (
-          <Editor apiKey={null}
+          <Editor apiKey="wo5zpf8gna68zyp4cskhykdw08i83mdxm497ryns97rlbtr5"
             initialValue=""
             init={{
               branding: false,
