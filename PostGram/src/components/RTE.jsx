@@ -35,6 +35,7 @@ const RTE = ({ name, control, label, defaultValue = "" }) => {
               branding: false,
               height: 500,
               menubar: true,
+              promotion:false,
               plugins: [
                 "advlist autolink lists link image charmap print preview anchor",
                 "searchreplace visualblocks code fullscreen",
