@@ -37,15 +37,20 @@ const RTE = ({ name, control, label, defaultValue = "" }) => {
               menubar: true,
               promotion:false,
               plugins: [
-                "advlist autolink lists link image charmap print preview anchor",
-                "searchreplace visualblocks code fullscreen",
-                "insertdatetime media table paste code help wordcount",
+                //adding simple plugin 
+                // "advlist autolink lists link image charmap print preview anchor",
+                // "searchreplace visualblocks code fullscreen",
+                // "insertdatetime media table paste code help wordcount",
+                "lists", "link"
               ],
               toolbar:
-                "undo redo | formatselect | bold italic backcolor | \
-        alignleft aligncenter alignright alignjustify | \
-        bullist numlist outdent indent | removeformat | help ",
-        content_style:"body { font-family:Helvetica,Arial,sans-sarif;font-size:14px}"
+
+              // adding simple toolbar
+        //         "undo redo | formatselect | bold italic backcolor | \
+        // alignleft aligncenter alignright alignjustify | \
+        // bullist numlist outdent indent | removeformat | help ",
+        // content_style:"body { font-family:Helvetica,Arial,sans-sarif;font-size:14px}"
+        "undo redo | bold italic | bullist numlist | link",
             }}
             onEditorChange={onChange}
           />

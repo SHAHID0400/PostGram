@@ -37,15 +37,12 @@ const Home = () => {
   return (
     <div className="w-full py-8">
       <Container>
-        <div className="flex flex-wrap -mx-2 ">
-          {posts.map((post) => (
-            <div
-              className="p-2 w-full sm:w-1/2 md:w-1/3 lg:w-1/4"
-              key={post.$id}
-            >
-              <PostCard post={{ ...post }} />
-            </div>
-          ))}
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 gap-6 justify-items-center">
+            {posts.map((post) => (
+              <PostCard key={post.$id} post={post} />
+            ))}
+          </div>
         </div>
       </Container>
     </div>

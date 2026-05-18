@@ -10,7 +10,7 @@ const Contentcard = () => {
         </div>
 
         <h1 className="text-2xl font-bold text-white mb-2">
-          Welcome to Postgram 🚀
+          Welcome to Postgram 
         </h1>
 
         <p className="text-gray-300 text-sm mb-6">

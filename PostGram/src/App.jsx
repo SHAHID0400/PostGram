@@ -27,8 +27,7 @@ export const App = () => {
           dispatch(logout());
         }
       } catch (error) {
-        // 👇 IMPORTANT
-        // guest user pe error aayega — ignore kar
+        
         dispatch(logout());
       } finally {
         setloading(false);
@@ -37,6 +36,7 @@ export const App = () => {
 
     checkUser();
   }, []);
+  
 
   return !loading ? (
     <div className="min-h-screen bg-gradient-to-br flex flex-col from-slate-900 via-blue-950 to-slate-900 text-white">

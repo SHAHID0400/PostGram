@@ -5,6 +5,7 @@ import { Button, Input, Select, RTE } from "../index";
 import appwriteService from "../../Appwrite/config";
 import { useNavigate } from "react-router-dom";
 import { useSelector } from "react-redux";
+import authservice from "../../Appwrite/Auth";
 
 const PostForm = ({ post }) => {
   const { register, handleSubmit, watch, setValue, control, getValues } =
@@ -21,14 +22,19 @@ const PostForm = ({ post }) => {
   const userData = useSelector((state) => state.auth?.userData);
 
   const submit = async (data) => {
+    const currentUser = userData;
+    if (!currentUser) {
+      alert("User not logged in");
+      return;
+    }
     if (post) {
-      // ✅ UPDATE POST
+      //  UPDATE POST
       const file = data.image[0]
         ? await appwriteService.uploadFile(data.image[0])
         : null;
 
       if (file) {
-        appwriteService.deletFile(post.featuredImage);
+        appwriteService.deleteFile(post.featuredImage);
       }
 
       const dbPost = await appwriteService.updatePost(post.$id, {
@@ -40,14 +46,15 @@ const PostForm = ({ post }) => {
         navigate(`/post/${dbPost.$id}`);
       }
     } else {
-      // ✅ CREATE NEW POST (YEH MISSING THA)
+      //  CREATE NEW POST
       const file = await appwriteService.uploadFile(data.image[0]);
 
       if (file) {
         const dbPost = await appwriteService.createPost({
           ...data,
           featuredImage: file.$id,
-          userId: userData?.$id, // 👈 SAFE ACCESS
+          userId: currentUser.$id,
+          name: currentUser.name,
         });
 
         if (dbPost) {
@@ -77,16 +84,23 @@ const PostForm = ({ post }) => {
     }
   }, [title, slugTransform, setValue]);
 
-  if (!userData) {
-    return <h1>Loading...</h1>;
+  useEffect(() => {
+    if (userData === null) return;
+
+    if (!userData) {
+      navigate("/login");
+    }
+  }, [userData, navigate]);
+
+  if (userData === null) {
+    return <h1 className="text-white">Loading user...</h1>;
   }
 
-  console.log("FINAL USER ID:", userData?.$id);
   return (
     <form onSubmit={handleSubmit(submit)} className="flex flex-wrap">
       <div className="w-2/3 px-2">
         <Input
-          label={<span className='text-white'>Title</span> }
+          label={<span className="text-white">Title</span>}
           placeholder="Title"
           className="mb-4"
           {...register("title", { required: true })}
@@ -101,7 +115,7 @@ const PostForm = ({ post }) => {
           }}
         />
         <Input
-          label={<span className='text-white'>Slug</span>}
+          label={<span className="text-white">Slug</span>}
           placeholder="Slug"
           className="mb-4"
           {...register("slug", { required: true })}
@@ -112,7 +126,7 @@ const PostForm = ({ post }) => {
           }}
         />
         <RTE
-          label={<span className='text-white'>Content</span> }
+          label={<span className="text-white">Content</span>}
           name="content"
           control={control}
           defaultValue={getValues("content")}
@@ -120,7 +134,7 @@ const PostForm = ({ post }) => {
       </div>
       <div className="w-1/3 px-2">
         <Input
-          label={<span className='text-white'>Featured Image</span> }
+          label={<span className="text-white">Featured Image</span>}
           type="file"
           className="mb-4"
           accept="image/png, image/jpg, image/jpeg, image/gif"
@@ -137,7 +151,7 @@ const PostForm = ({ post }) => {
         )}
         <Select
           options={["active", "inactive"]}
-          label={<span className='text-white'>Status</span>}
+          label={<span className="text-white">Status</span>}
           className="mb-4"
           {...register("status", { required: true })}
         />
@@ -145,7 +159,6 @@ const PostForm = ({ post }) => {
           type="submit"
           bgColor={post ? "bg-green-500" : undefined}
           className="w-full"
-          
         >
           {post ? "Update" : "Submit"}
         </Button>
