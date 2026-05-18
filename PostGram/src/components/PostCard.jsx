@@ -23,7 +23,7 @@ const PostCard = ({ post }) => {
                 : "https://via.placeholder.com/400"
             }
             alt={post.title}
-            className=" w-full h-full object-cover "
+            className=" w-full h-full object-cover object-center "
           />
         </div>
 
