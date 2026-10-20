@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useDispatch } from "react-redux";
 import { useForm } from "react-hook-form";
 import { Lock, Mail } from "lucide-react";
 import authservice from "../Appwrite/Auth";
+import appwriteService from "../Appwrite/config";
 import { toUserMessage } from "../lib/errors";
 import { login as authLogin } from "../store/authSlice";
 import {
@@ -17,12 +18,14 @@ import {
 const Login = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     register,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm({ mode: "onTouched" });
   const [error, setError] = useState("");
+  const [notice] = useState(() => location.state?.message || "");
 
   const login = async (data) => {
     setError("");
@@ -30,32 +33,65 @@ const Login = () => {
     try {
       const session = await authservice.Login(data);
 
-      if (session) {
-        const user = await authservice.getcurrentUser();
-
-        if (user) {
-          let prefs = {};
-
-          try {
-            prefs = (await authservice.getPrefs()) || {};
-          } catch (prefsError) {
-            // Sign in still works when preferences can't be read.
-          }
-
-          dispatch(
-            authLogin({
-              $id: user.$id,
-              email: user.email,
-              name: user.name,
-              username: prefs.username || "",
-              bio: prefs.bio || "",
-              avatarFileId: prefs.avatarFileId || "",
-            }),
-          );
-        }
-
-        navigate("/dashboard", { replace: true });
+      if (!session) {
+        throw new Error("No session was created.");
       }
+
+      const user = await authservice.getcurrentUser();
+
+      if (!user) {
+        await authservice.Logout();
+        throw new Error("The new session could not be verified.");
+      }
+
+      let prefs = {};
+
+      try {
+        prefs = (await authservice.getPrefs()) || {};
+      } catch (prefsError) {
+        // Sign in still works when preferences can't be read.
+      }
+
+      // Apply the handle chosen during registration, now that a session exists.
+      let username = prefs.username || "";
+      const pending = authservice.consumePendingProfile(user.email);
+
+      if (pending?.username) {
+        username = pending.username;
+
+        try {
+          await authservice.saveProfile({
+            name: user.name,
+            username,
+            bio: prefs.bio || "",
+            avatarFileId: prefs.avatarFileId || "",
+          });
+
+          await appwriteService.savePublicProfile({
+            userId: user.$id,
+            name: user.name || "",
+            username,
+            bio: prefs.bio || "",
+            avatarFileId: prefs.avatarFileId || "",
+          });
+        } catch (profileError) {
+          // Sign-in must not fail because the optional profiles collection
+          // has not been created yet.
+        }
+      }
+
+      dispatch(
+        authLogin({
+          $id: user.$id,
+          email: user.email,
+          name: user.name,
+          username,
+          bio: prefs.bio || "",
+          avatarFileId: prefs.avatarFileId || "",
+        }),
+      );
+
+      navigate("/dashboard", { replace: true });
     } catch (err) {
       setError(
         toUserMessage(
@@ -80,6 +116,7 @@ const Login = () => {
         </p>
       </div>
 
+      {notice ? <AuthAlert variant="success">{notice}</AuthAlert> : null}
       {error ? <AuthAlert>{error}</AuthAlert> : null}
 
       <form

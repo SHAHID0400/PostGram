@@ -54,11 +54,11 @@ export const App = () => {
             }),
           );
 
-          // Backfill the public profile document so user search can find
-          // accounts that existed before profiles were introduced.
+          // Backfill the public profile document only when it is missing, so
+          // accounts that predate profiles stay searchable without overwriting
+          // data a user has already saved.
           appwriteService
-            .savePublicProfile({
-              userId: userData.$id,
+            .ensurePublicProfile(userData.$id, {
               name: userData.name || "",
               username: prefs.username || "",
               bio: prefs.bio || "",
@@ -66,9 +66,12 @@ export const App = () => {
             })
             .catch(() => {});
         } else {
+          authService.clearClientCache();
           dispatch(logout());
         }
       } catch (error) {
+        // A missing or expired session must never leave cached identity behind.
+        authService.clearClientCache();
         dispatch(logout());
       } finally {
         setloading(false);

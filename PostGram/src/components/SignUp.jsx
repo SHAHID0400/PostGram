@@ -1,12 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useDispatch } from "react-redux";
 import { useForm } from "react-hook-form";
-import { Lock, Mail, User } from "lucide-react";
+import { AtSign, Lock, Mail, User } from "lucide-react";
 import authservice from "../Appwrite/Auth";
-import appwriteService from "../Appwrite/config";
 import { toUserMessage } from "../lib/errors";
-import { login } from "../store/authSlice";
 import {
   AuthAlert,
   AuthField,
@@ -17,7 +14,6 @@ import {
 
 const SignUp = () => {
   const navigate = useNavigate();
-  const dispatch = useDispatch();
   const {
     register,
     handleSubmit,
@@ -29,46 +25,29 @@ const SignUp = () => {
     setError("");
 
     try {
-      const userData = await authservice.CreateAccount(data);
+      const created = await authservice.CreateAccount(data);
 
-      if (userData) {
-        const currentUser = await authservice.getcurrentUser();
-
-        if (currentUser) {
-          let prefs = {};
-
-          try {
-            prefs = (await authservice.getPrefs()) || {};
-          } catch (prefsError) {
-            // A brand-new account has no preferences yet.
-          }
-
-          dispatch(
-            login({
-              $id: currentUser.$id,
-              email: currentUser.email,
-              name: currentUser.name,
-              username: prefs.username || "",
-              bio: prefs.bio || "",
-              avatarFileId: prefs.avatarFileId || "",
-            }),
-          );
-
-          // Create the public profile document so people can find this
-          // account by name or @username right away.
-          appwriteService
-            .savePublicProfile({
-              userId: currentUser.$id,
-              name: currentUser.name || "",
-              username: prefs.username || "",
-              bio: prefs.bio || "",
-              avatarFileId: prefs.avatarFileId || "",
-            })
-            .catch(() => {});
-        }
-
-        navigate("/dashboard", { replace: true });
+      if (!created?.$id) {
+        throw new Error("Account was not created.");
       }
+
+      // There is no session yet, so the chosen handle is kept locally until
+      // the first sign-in and then written to preferences + public profile.
+      authservice.rememberPendingProfile({
+        email: data.email,
+        name: data.name,
+        username: data.username,
+      });
+
+      // Registration deliberately stops here. A dedicated sign-in makes the
+      // new account prove its credentials before any session exists.
+      navigate("/login", {
+        replace: true,
+        state: {
+          message:
+            "Account created successfully! Please sign in with your credentials.",
+        },
+      });
     } catch (err) {
       setError(
         toUserMessage(
@@ -108,6 +87,22 @@ const SignUp = () => {
           error={errors.name}
           {...register("name", {
             required: "Please enter your full name.",
+          })}
+        />
+
+        <AuthField
+          label="Username"
+          placeholder="yourhandle"
+          icon={AtSign}
+          autoComplete="username"
+          hint="This is the @handle people will see on your profile."
+          error={errors.username}
+          {...register("username", {
+            required: "Please choose a username.",
+            pattern: {
+              value: /^[a-z0-9._]{3,20}$/i,
+              message: "Use 3–20 letters, numbers, dots or underscores.",
+            },
           })}
         />
 

@@ -286,10 +286,14 @@ export const AuthTabs = ({ active }) => {
   );
 };
 
-export const AuthAlert = ({ children }) => (
+export const AuthAlert = ({ children, variant = "error" }) => (
   <div
     role="alert"
-    className="mt-5 flex items-start gap-2.5 rounded-2xl border border-rose-500/25 bg-rose-500/[0.08] px-3.5 py-3 text-xs leading-relaxed text-rose-200"
+    className={
+      variant === "success"
+        ? "mt-5 flex items-start gap-2.5 rounded-2xl border border-emerald-500/25 bg-emerald-500/[0.08] px-3.5 py-3 text-xs leading-relaxed text-emerald-200"
+        : "mt-5 flex items-start gap-2.5 rounded-2xl border border-rose-500/25 bg-rose-500/[0.08] px-3.5 py-3 text-xs leading-relaxed text-rose-200"
+    }
   >
     <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
     <span>{children}</span>

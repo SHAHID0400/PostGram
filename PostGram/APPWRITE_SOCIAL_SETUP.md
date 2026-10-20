@@ -7,20 +7,29 @@ with the env vars listed below.
 
 ## 1. `profiles`
 
-Public identity for every account. The document ID is the Appwrite user ID.
+Public identity for every account. Profiles are looked up with
+`Query.equal("userId", currentUser.$id)`, so new documents are created with
+`ID.unique()`. Documents created by older builds used the Appwrite user ID as
+the document ID; the client still reads those through a direct lookup.
 
 | Attribute      | Type   | Size | Required |
 | -------------- | ------ | ---- | -------- |
 | `userId`       | string | 36   | yes      |
 | `name`         | string | 128  | no       |
+| `displayName`  | string | 128  | no       |
 | `username`     | string | 36   | no       |
 | `bio`          | string | 255  | no       |
 | `avatarFileId` | string | 36   | no       |
 
+The client writes the display name to both `name` and `displayName` when the
+schema has both, and falls back to whichever attribute exists. Include at
+least one of them.
+
 Permissions: **read: Any**, **create: Users**, **update/delete: Users**
 (enable document security so each user can edit their own document).
 
-Index: `userId` (ascending), `username` (ascending).
+Indexes: **`userId` (ascending) is required** for the profile lookup query;
+add `username` (ascending) if you search by handle in the console.
 
 ## 2. `follows`
 
@@ -45,6 +54,14 @@ Indexes: `followerId`, `followingId`.
 | `senderId`       | string | 36   | yes      |
 | `receiverId`     | string | 36   | yes      |
 | `body`           | string | 2048 | yes      |
+| `senderName`     | string | 128  | no       |
+| `senderUsername` | string | 36   | no       |
+| `senderAvatarFileId` | string | 36 | no     |
+
+The three `sender*` attributes are optional sender snapshots. When they exist,
+chat can show a real name, handle and avatar even if the profiles collection is
+missing. If the collection only has the four core attributes, message sending
+retries without the snapshot and still works.
 
 Permissions: **read: Users**, **create: Users**. Do not allow anonymous read.
 

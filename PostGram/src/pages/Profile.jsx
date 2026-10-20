@@ -179,6 +179,14 @@ const Profile = () => {
         avatarFileId: uploadedId,
       });
 
+      await appwriteService.savePublicProfile({
+        userId: userData.$id,
+        name: userData?.name || "",
+        username: userData?.username || "",
+        bio: userData?.bio || "",
+        avatarFileId: uploadedId,
+      });
+
       dispatch(updateUser({ avatarFileId: uploadedId }));
 
       if (userData?.avatarFileId && userData.avatarFileId !== uploadedId) {
@@ -235,6 +243,16 @@ const Profile = () => {
 
     try {
       await authService.saveProfile({
+        name: values.cleanName,
+        username: values.cleanUsername,
+        bio: cleanBio,
+        avatarFileId: userData?.avatarFileId || "",
+      });
+
+      // Persist the public-facing copy immediately so /profile/:userId and
+      // chat resolution see the new handle without waiting for a refetch.
+      await appwriteService.savePublicProfile({
+        userId: userData.$id,
         name: values.cleanName,
         username: values.cleanUsername,
         bio: cleanBio,

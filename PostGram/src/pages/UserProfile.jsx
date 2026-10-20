@@ -141,7 +141,9 @@ const UserProfile = () => {
 
   const displayName = profile?.name || "PostGram creator";
   const avatarFileId = profile?.avatarFileId || "";
-  const notFound = !loading && !error && !profile?.hasProfile && posts.length === 0;
+  const username = String(profile?.username || "").replace(/^@+/, "");
+  const notFound =
+    !loading && !error && !profile?.hasProfile && !profile?.name && posts.length === 0;
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-night text-slate-200">
@@ -164,9 +166,9 @@ const UserProfile = () => {
             <h1 className="truncate font-display text-sm font-semibold text-white">
               {loading ? "Profile" : displayName}
             </h1>
-            {profile?.username ? (
+            {username ? (
               <p className="truncate text-[10px] text-slate-500">
-                @{profile.username}
+                @{username}
               </p>
             ) : null}
           </div>
@@ -232,19 +234,12 @@ const UserProfile = () => {
                 {displayName}
               </h2>
 
-              {profile?.username ? (
+              {username ? (
                 <p className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-medium text-slate-300">
                   <AtSign className="h-3 w-3 text-violet-300" />
-                  {profile.username}
+                  {username}
                 </p>
-              ) : (
-                <p
-                  className="mt-1.5 inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[10px] font-medium text-slate-400"
-                  title="This creator hasn't saved a public username yet"
-                >
-                  ID · {userId.slice(0, 12)}…
-                </p>
-              )}
+              ) : null}
 
               {profile?.bio ? (
                 <p className="mx-auto mt-3 max-w-md whitespace-pre-line text-sm leading-relaxed text-slate-400">
@@ -252,9 +247,7 @@ const UserProfile = () => {
                 </p>
               ) : (
                 <p className="mx-auto mt-3 max-w-md text-xs leading-relaxed text-slate-500">
-                  {profile?.hasProfile
-                    ? "No bio added yet."
-                    : "This creator hasn't saved a public profile yet. Their moments are still real and shown below."}
+                  No bio added yet.
                 </p>
               )}
 

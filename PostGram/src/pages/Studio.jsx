@@ -253,10 +253,23 @@ const Studio = () => {
       setStage(3);
       await wait(650);
 
+      // Router state must stay JSON-serialisable. Appwrite returns a document
+      // model, so pass a plain snapshot with primitives only.
+      const published = {
+        $id: post.$id,
+        $createdAt: post.$createdAt,
+        title: post.title,
+        content: post.content,
+        featuredImage: post.featuredImage,
+        status: post.status,
+        userId: post.userId,
+        name: post.name,
+      };
+
       navigate("/dashboard", {
         replace: true,
         state: {
-          createdPost: post,
+          createdPost: published,
           note: metadataSaved
             ? ""
             : "Your photo is live. Location and audience weren't saved because those fields don't exist in the posts collection yet.",

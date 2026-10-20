@@ -12,6 +12,40 @@ const slugify = (value) =>
         .replace(/^-|-$/g, "")
         .slice(0, 60) || "moment";
 
+const PROFILE_COLLECTION_MISSING =
+    /collection.*(not found|could not be found|does not exist)/i;
+
+// Avoid repeating failing requests once Appwrite reports that the optional
+// profiles collection has not been created yet.
+let profilesCollectionAvailable = null;
+
+const isProfilesMissing = (error) =>
+    error?.code === 404 && PROFILE_COLLECTION_MISSING.test(error?.message || "");
+
+const isProfileSchemaError = (error) =>
+    error?.code === 400 &&
+    /attribute|document structure|invalid format|invalid value|enum|unknown/i.test(
+        error?.message || "",
+    );
+
+const cleanHandle = (value) =>
+    String(value || "")
+        .trim()
+        .replace(/^@+/, "")
+        .replace(/[^a-zA-Z0-9._]/g, "")
+        .slice(0, 36);
+
+const profileNameOf = (profile) => profile?.name || profile?.displayName || "";
+
+const normalizeProfile = (profile, fallbackUserId = "") => ({
+    userId: profile?.userId || fallbackUserId,
+    name: profileNameOf(profile),
+    username: cleanHandle(profile?.username),
+    bio: profile?.bio || "",
+    avatarFileId: profile?.avatarFileId || "",
+    hasProfile: Boolean(profile),
+});
+
 
 export class Service {
     client=new Client();
@@ -190,73 +224,258 @@ subscribeToFeed(callback) {
 
 // ── Public profiles / user discovery ───────────────────────
 // Appwrite's Users API is server-only, so public identity lives in the
-// `profiles` collection (document id = Appwrite user id). Existing accounts
-// that haven't visited their profile yet are still discoverable through the
-// author data stored on their real posts.
-async savePublicProfile({ userId, name = "", username = "", bio = "", avatarFileId = "" } = {}) {
+// `profiles` collection and is looked up by its `userId` attribute. Documents
+// created by this service use `ID.unique()`; profiles that older versions
+// stored at the user id are still read through a direct lookup. Existing
+// accounts that haven't visited their profile yet remain discoverable through
+// the author data stored on their real posts.
+async savePublicProfile({
+    userId,
+    name = "",
+    displayName = "",
+    username = "",
+    bio = "",
+    avatarFileId = "",
+} = {}) {
     if (!userId) return false;
+    if (profilesCollectionAvailable === false) return false;
 
-    const data = {
-        userId,
-        name: sanitizeText(name, 128),
-        username: sanitizeText(username, 20).replace(/[^a-zA-Z0-9._]/g, ""),
-        bio: sanitizeText(bio, 160),
-        avatarFileId,
-    };
     const databaseId = conf.appwriteDatabaseId;
     const collectionId = conf.appwriteProfilesCollectionId;
+    const resolvedName = sanitizeText(name || displayName, 128);
+    const safeHandle = cleanHandle(sanitizeText(username, 36));
+    const cleanBio = sanitizeText(bio, 160);
+    const safeAvatar = String(avatarFileId || "");
+    const core = {
+        userId,
+        name: resolvedName,
+        displayName: resolvedName,
+        username: safeHandle,
+        bio: cleanBio,
+        avatarFileId: safeAvatar,
+    };
+    // Workspaces differ in whether the profile name lives in `name`,
+    // `displayName`, or both. Try the richest payload first, then the schemas
+    // that only declare one of them.
+    const variants = [
+        core,
+        {
+            userId,
+            name: resolvedName,
+            username: safeHandle,
+            bio: cleanBio,
+            avatarFileId: safeAvatar,
+        },
+        {
+            userId,
+            displayName: resolvedName,
+            username: safeHandle,
+            bio: cleanBio,
+            avatarFileId: safeAvatar,
+        },
+        {
+            userId,
+            username: safeHandle,
+            bio: cleanBio,
+            avatarFileId: safeAvatar,
+        },
+    ];
+    const permissions = [
+        Permission.read(Role.any()),
+        Permission.update(Role.user(userId)),
+        Permission.delete(Role.user(userId)),
+    ];
 
-    try {
-        await this.Databases.updateDocument(databaseId, collectionId, userId, data);
-        return true;
-    } catch (updateError) {
-        if (updateError?.code !== 404) return false;
+    const findExisting = async () => {
+        try {
+            const result = await this.Databases.listDocuments(
+                databaseId,
+                collectionId,
+                [Query.equal("userId", userId), Query.limit(1)],
+            );
+            profilesCollectionAvailable = true;
+            if (result.documents?.length) return result.documents[0];
+        } catch (queryError) {
+            if (isProfilesMissing(queryError)) {
+                profilesCollectionAvailable = false;
+                return null;
+            }
+            // An unindexed `userId` attribute rejects the query; keep going.
+        }
+
+        try {
+            const doc = await this.Databases.getDocument(
+                databaseId,
+                collectionId,
+                userId,
+            );
+            profilesCollectionAvailable = true;
+            return doc;
+        } catch (lookupError) {
+            if (isProfilesMissing(lookupError)) {
+                profilesCollectionAvailable = false;
+                return null;
+            }
+            // Documents created with ID.unique() have a different document id.
+        }
+
+        try {
+            const result = await this.Databases.listDocuments(
+                databaseId,
+                collectionId,
+                [Query.limit(100)],
+            );
+            profilesCollectionAvailable = true;
+            return result.documents?.find((doc) => doc.userId === userId) || null;
+        } catch (scanError) {
+            if (isProfilesMissing(scanError)) {
+                profilesCollectionAvailable = false;
+            }
+            return null;
+        }
+    };
+
+    const existing = await findExisting();
+    if (profilesCollectionAvailable === false) return false;
+
+    if (existing?.$id) {
+        const knownFields = Object.fromEntries(
+            Object.entries(core).filter(([key]) =>
+                Object.prototype.hasOwnProperty.call(existing, key),
+            ),
+        );
+        const updates = Object.keys(knownFields).length
+            ? [knownFields, ...variants]
+            : variants;
+
+        for (const payload of updates) {
+            try {
+                await this.Databases.updateDocument(
+                    databaseId,
+                    collectionId,
+                    existing.$id,
+                    payload,
+                );
+                profilesCollectionAvailable = true;
+                return true;
+            } catch (updateError) {
+                if (isProfilesMissing(updateError)) {
+                    profilesCollectionAvailable = false;
+                    return false;
+                }
+                if (!isProfileSchemaError(updateError)) return false;
+            }
+        }
+
+        return false;
     }
 
-    try {
-        await this.Databases.createDocument(
-            databaseId,
-            collectionId,
-            userId,
-            data,
-            [
-                Permission.read(Role.any()),
-                Permission.update(Role.user(userId)),
-                Permission.delete(Role.user(userId)),
-            ],
-        );
-        return true;
-    } catch (permissionError) {
+    const createOnce = async (payload, documentId) => {
         try {
-            await this.Databases.createDocument(databaseId, collectionId, userId, data);
+            return await this.Databases.createDocument(
+                databaseId,
+                collectionId,
+                documentId,
+                payload,
+                permissions,
+            );
+        } catch (permissionError) {
+            if (isProfilesMissing(permissionError)) throw permissionError;
+            // Collections without document security reject custom permissions;
+            // retry with the collection defaults.
+            return this.Databases.createDocument(
+                databaseId,
+                collectionId,
+                documentId,
+                payload,
+            );
+        }
+    };
+
+    for (const payload of variants) {
+        try {
+            await createOnce(payload, ID.unique());
+            profilesCollectionAvailable = true;
             return true;
         } catch (createError) {
-            return false;
+            if (isProfilesMissing(createError)) {
+                profilesCollectionAvailable = false;
+                return false;
+            }
+            if (!isProfileSchemaError(createError)) return false;
         }
+    }
+
+    // Last resort: keep the legacy document id = user id shape so the direct
+    // lookup in getPublicProfile keeps resolving this account.
+    try {
+        await createOnce(
+            {
+                userId,
+                username: safeHandle,
+                bio: cleanBio,
+                avatarFileId: safeAvatar,
+            },
+            userId,
+        );
+        profilesCollectionAvailable = true;
+        return true;
+    } catch (legacyError) {
+        if (isProfilesMissing(legacyError)) profilesCollectionAvailable = false;
+        return false;
     }
 }
 
 async getPublicProfile(userId) {
     if (!userId) return null;
 
-    try {
-        const profile = await this.Databases.getDocument(
-            conf.appwriteDatabaseId,
-            conf.appwriteProfilesCollectionId,
-            userId,
-        );
+    let profile = null;
 
-        return {
-            userId,
-            name: profile.name || "",
-            username: profile.username || "",
-            bio: profile.bio || "",
-            avatarFileId: profile.avatarFileId || "",
-            hasProfile: true,
-        };
-    } catch (profileError) {
-        // No public profile document yet — fall back to the real author name
-        // stored on their posts instead of inventing one.
+    if (profilesCollectionAvailable !== false) {
+        try {
+            const result = await this.Databases.listDocuments(
+                conf.appwriteDatabaseId,
+                conf.appwriteProfilesCollectionId,
+                [Query.equal("userId", userId), Query.limit(1)],
+            );
+            profilesCollectionAvailable = true;
+            profile = result.documents?.[0] || null;
+        } catch (queryError) {
+            // A 404 for the collection is cached so we stop retrying it; other
+            // query errors fall through to the direct document lookup.
+            if (isProfilesMissing(queryError)) {
+                profilesCollectionAvailable = false;
+            }
+        }
+
+        if (!profile && profilesCollectionAvailable !== false) {
+            try {
+                profile = await this.Databases.getDocument(
+                    conf.appwriteDatabaseId,
+                    conf.appwriteProfilesCollectionId,
+                    userId,
+                );
+                profilesCollectionAvailable = true;
+            } catch (lookupError) {
+                if (isProfilesMissing(lookupError)) {
+                    profilesCollectionAvailable = false;
+                }
+            }
+        }
+    }
+
+    if (profile) {
+        const normalized = normalizeProfile(profile, userId);
+        if (normalized.name) return normalized;
+
+        // A profile saved before a display name was set still has a real
+        // author name on its posts; prefer that over a generic fallback.
+        try {
+            const posts = await this.listFeedPosts({ limit: 1, offset: 0, userId });
+            return { ...normalized, name: posts.documents[0]?.name || "" };
+        } catch (postError) {
+            return normalized;
+        }
     }
 
     try {
@@ -272,15 +491,28 @@ async getPublicProfile(userId) {
             hasProfile: false,
         };
     } catch (postError) {
-        return {
-            userId,
-            name: "",
-            username: "",
-            bio: "",
-            avatarFileId: "",
-            hasProfile: false,
-        };
+        return normalizeProfile(null, userId);
     }
+}
+
+// Self-healing backfill for accounts that existed before the profiles
+// collection did. It never overwrites a profile a user has already saved.
+async ensurePublicProfile(
+    userId,
+    { name = "", username = "", bio = "", avatarFileId = "" } = {},
+) {
+    if (!userId) return false;
+
+    const existing = await this.getPublicProfile(userId);
+    if (existing?.hasProfile) return true;
+
+    return this.savePublicProfile({
+        userId,
+        name,
+        username,
+        bio,
+        avatarFileId,
+    });
 }
 
 async searchUsers(term, { limit = 8, currentUser = null } = {}) {
@@ -306,8 +538,8 @@ async searchUsers(term, { limit = 8, currentUser = null } = {}) {
 
             people.set(userId, {
                 userId,
-                name: profile.name || "",
-                username: profile.username || "",
+                name: profileNameOf(profile),
+                username: cleanHandle(profile.username),
                 avatarFileId: profile.avatarFileId || "",
                 hasProfile: true,
             });
@@ -467,17 +699,44 @@ async sendMessage({ sender, recipientId, body }) {
         throw new Error("A recipient and message body are required.");
     }
 
-    return this.Databases.createDocument(
-        conf.appwriteDatabaseId,
-        conf.appwriteMessagesCollectionId,
-        ID.unique(),
-        {
-            conversationId: this.conversationIdFor(sender.$id, recipientId),
-            senderId: sender.$id,
-            receiverId: recipientId,
-            body: text,
-        },
-    );
+    const base = {
+        conversationId: this.conversationIdFor(sender.$id, recipientId),
+        senderId: sender.$id,
+        receiverId: recipientId,
+        body: text,
+    };
+
+    // Optional sender snapshot lets chat resolve a name, handle and avatar
+    // before the recipient has opened their public profile.
+    const snapshot = {
+        senderName: sanitizeText(sender.name, 128),
+        senderUsername: sanitizeText(sender.username, 20).replace(
+            /[^a-zA-Z0-9._]/g,
+            "",
+        ),
+        senderAvatarFileId: sender.avatarFileId || "",
+    };
+
+    const create = (data) =>
+        this.Databases.createDocument(
+            conf.appwriteDatabaseId,
+            conf.appwriteMessagesCollectionId,
+            ID.unique(),
+            data,
+        );
+
+    try {
+        return await create({ ...base, ...snapshot });
+    } catch (error) {
+        const schemaMismatch =
+            error?.code === 400 &&
+            /attribute|document structure|invalid/i.test(error?.message || "");
+
+        if (!schemaMismatch) throw error;
+
+        // The messages collection may only contain the core four attributes.
+        return create(base);
+    }
 }
 
 async listConversations(userId) {
@@ -504,9 +763,26 @@ async listConversations(userId) {
         ),
     ]);
 
+    const allMessages = [...sent.documents, ...received.documents];
     const latestByPerson = new Map();
+    const snapshotsBySender = new Map();
 
-    [...sent.documents, ...received.documents]
+    allMessages.forEach((message) => {
+        if (
+            message.senderId &&
+            (message.senderName ||
+                message.senderUsername ||
+                message.senderAvatarFileId)
+        ) {
+            snapshotsBySender.set(message.senderId, {
+                name: message.senderName || "",
+                username: message.senderUsername || "",
+                avatarFileId: message.senderAvatarFileId || "",
+            });
+        }
+    });
+
+    allMessages
         .sort(
             (first, second) =>
                 new Date(second.$createdAt).getTime() -
@@ -527,11 +803,23 @@ async listConversations(userId) {
         entries.map(([otherId]) => this.getPublicProfile(otherId)),
     );
 
-    return entries.map(([otherId, message], index) => ({
-        userId: otherId,
-        profile: profiles[index],
-        message,
-    }));
+    return entries.map(([otherId, message], index) => {
+        const profile = profiles[index] || {};
+        const snapshot = snapshotsBySender.get(otherId) || {};
+
+        return {
+            userId: otherId,
+            profile: {
+                ...profile,
+                userId: profile.userId || otherId,
+                name: profile.name || snapshot.name || "",
+                username: profile.username || snapshot.username || "",
+                avatarFileId:
+                    profile.avatarFileId || snapshot.avatarFileId || "",
+            },
+            message,
+        };
+    });
 }
 
 subscribeToMessages(callback) {
@@ -579,7 +867,8 @@ async createStudioPost({
     };
 
     const optional = {};
-    if (sanitizeText(location, 80)) optional.location = sanitizeText(location, 80);
+    const safeLocation = sanitizeText(location, 60);
+    if (safeLocation) optional.location = safeLocation;
     if (audience) optional.audience = audience;
 
     const create = (data) =>
@@ -590,13 +879,20 @@ async createStudioPost({
             data,
         );
 
+    // Optional metadata is only written when the collection schema allows it.
+    // Appwrite reports a missing attribute, invalid enum or shape mismatch as
+    // a 400, so retry with a smaller payload instead of failing the upload.
+    const schemaMismatch = (error) =>
+        error?.code === 400 &&
+        /attribute|document structure|invalid format|invalid value|enum/i.test(
+            error?.message || "",
+        );
+
     try {
         const post = await create({ ...base, ...optional });
         return { post, metadataSaved: true };
     } catch (error) {
-        const unknownAttribute = /unknown attribute/i.test(error?.message || "");
-
-        if (!unknownAttribute || Object.keys(optional).length === 0) {
+        if (!schemaMismatch(error) || Object.keys(optional).length === 0) {
             throw error;
         }
 
@@ -609,7 +905,7 @@ async createStudioPost({
             });
             return { post, metadataSaved: false };
         } catch (secondError) {
-            if (!/unknown attribute/i.test(secondError?.message || "")) {
+            if (!schemaMismatch(secondError)) {
                 throw secondError;
             }
 

@@ -36,6 +36,38 @@ const formatClock = (value) => {
   });
 };
 
+const handleOf = (value) => String(value || "").replace(/^@+/, "");
+
+const mergeProfile = (profile, snapshot, userId) => ({
+  userId: profile?.userId || snapshot?.userId || userId || "",
+  name: profile?.name || snapshot?.name || "",
+  username: profile?.username || snapshot?.username || "",
+  bio: profile?.bio || "",
+  avatarFileId: profile?.avatarFileId || snapshot?.avatarFileId || "",
+  hasProfile: Boolean(profile?.hasProfile),
+});
+
+const snapshotFromMessages = (documents, otherId) => {
+  const source = [...documents]
+    .reverse()
+    .find(
+      (message) =>
+        message.senderId === otherId &&
+        (message.senderName ||
+          message.senderUsername ||
+          message.senderAvatarFileId),
+    );
+
+  if (!source) return null;
+
+  return {
+    userId: otherId,
+    name: source.senderName || "",
+    username: source.senderUsername || "",
+    avatarFileId: source.senderAvatarFileId || "",
+  };
+};
+
 const SetupNotice = ({ collection }) => (
   <div className="rounded-2xl border border-amber-400/25 bg-amber-500/10 p-4 text-left">
     <p className="flex items-center gap-2 text-xs font-semibold text-amber-200">
@@ -88,13 +120,27 @@ const Chat = () => {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [liveState, setLiveState] = useState("connecting");
+  const [unread, setUnread] = useState(() => new Set());
 
   const bottomRef = useRef(null);
   const activeRecipientRef = useRef(recipientId || null);
+  const recipientSnapshotRef = useRef(null);
   const refreshTimerRef = useRef(null);
 
   useEffect(() => {
     activeRecipientRef.current = recipientId || null;
+  }, [recipientId]);
+
+  // Opening a conversation marks it as read for this session.
+  useEffect(() => {
+    if (!recipientId) return;
+
+    setUnread((current) => {
+      if (!current.has(recipientId)) return current;
+      const next = new Set(current);
+      next.delete(recipientId);
+      return next;
+    });
   }, [recipientId]);
 
   const loadConversations = useCallback(
@@ -150,21 +196,22 @@ const Chat = () => {
     setDraft("");
     setActiveProfile(null);
     setProfileLoading(true);
+    recipientSnapshotRef.current = null;
 
     appwriteService
       .getPublicProfile(recipientId)
       .then((profile) => {
-        if (!cancelled) setActiveProfile(profile);
+        if (!cancelled) {
+          setActiveProfile(
+            mergeProfile(profile, recipientSnapshotRef.current, recipientId),
+          );
+        }
       })
       .catch(() => {
         if (!cancelled) {
-          setActiveProfile({
-            userId: recipientId,
-            name: "",
-            username: "",
-            bio: "",
-            avatarFileId: "",
-          });
+          setActiveProfile(
+            mergeProfile(null, recipientSnapshotRef.current, recipientId),
+          );
         }
       })
       .finally(() => {
@@ -176,6 +223,19 @@ const Chat = () => {
       .then((result) => {
         if (cancelled) return;
         setMessages(result.documents);
+
+        const snapshot = snapshotFromMessages(
+          result.documents,
+          recipientId,
+        );
+
+        if (snapshot) {
+          recipientSnapshotRef.current = snapshot;
+          setActiveProfile((current) =>
+            mergeProfile(current, snapshot, recipientId),
+          );
+        }
+
         setSetupRequired(false);
       })
       .catch((error) => {
@@ -217,6 +277,41 @@ const Chat = () => {
       }
 
       const currentRecipient = activeRecipientRef.current;
+      const otherId =
+        document.senderId === userData.$id
+          ? document.receiverId
+          : document.senderId;
+
+      if (
+        document.senderId !== userData.$id &&
+        otherId &&
+        otherId !== currentRecipient
+      ) {
+        setUnread((current) => {
+          const next = new Set(current);
+          next.add(otherId);
+          return next;
+        });
+      }
+
+      if (
+        document.senderId === currentRecipient &&
+        (document.senderName ||
+          document.senderUsername ||
+          document.senderAvatarFileId)
+      ) {
+        const snapshot = {
+          userId: document.senderId,
+          name: document.senderName || "",
+          username: document.senderUsername || "",
+          avatarFileId: document.senderAvatarFileId || "",
+        };
+
+        recipientSnapshotRef.current = snapshot;
+        setActiveProfile((current) =>
+          mergeProfile(current, snapshot, document.senderId),
+        );
+      }
 
       if (
         currentRecipient &&
@@ -231,6 +326,47 @@ const Chat = () => {
             ? current
             : [...current, document],
         );
+      }
+
+      if (otherId) {
+        setConversations((current) => {
+          const index = current.findIndex(
+            (conversation) => conversation.userId === otherId,
+          );
+
+          if (index === -1) return current;
+
+          const existing = current[index];
+          const next = [...current];
+
+          next[index] = {
+            ...existing,
+            message: document,
+            profile: {
+              ...existing.profile,
+              userId: otherId,
+              name:
+                existing.profile?.name ||
+                document.senderName ||
+                document.receiverName ||
+                "",
+              username:
+                existing.profile?.username ||
+                document.senderUsername ||
+                "",
+              avatarFileId:
+                existing.profile?.avatarFileId ||
+                document.senderAvatarFileId ||
+                "",
+            },
+          };
+
+          return next.sort(
+            (first, second) =>
+              new Date(second.message.$createdAt).getTime() -
+              new Date(first.message.$createdAt).getTime(),
+          );
+        });
       }
 
       clearTimeout(refreshTimerRef.current);
@@ -284,8 +420,17 @@ const Chat = () => {
     (conversation) => conversation.userId === recipientId,
   );
 
-  const headerProfile = activeProfile || activeConversation?.profile;
-  const headerName = headerProfile?.name || "PostGram creator";
+  const headerProfile = mergeProfile(
+    activeProfile,
+    activeConversation?.profile,
+    recipientId,
+  );
+  const headerUsername = handleOf(headerProfile?.username);
+  const headerName =
+    headerProfile?.name ||
+    (headerUsername ? `@${headerUsername}` : "PostGram member");
+  const headerAvatarName =
+    headerProfile?.name || headerUsername || "PostGram member";
 
   const sendMessage = async (event) => {
     event.preventDefault();
@@ -464,7 +609,12 @@ const Chat = () => {
                 <ul className="space-y-1">
                   {conversations.map((conversation) => {
                     const person = conversation.profile;
-                    const name = person?.name || "PostGram creator";
+                    const handle = handleOf(person?.username);
+                    const name =
+                      person?.name ||
+                      (handle ? `@${handle}` : "PostGram member");
+                    const avatarName =
+                      person?.name || handle || "PostGram member";
                     const active = conversation.userId === recipientId;
                     const isMine = conversation.message.senderId === userData?.$id;
 
@@ -479,7 +629,7 @@ const Chat = () => {
                           }`}
                         >
                           <Avatar
-                            name={name}
+                            name={avatarName}
                             src={
                               person?.avatarFileId
                                 ? appwriteService.getFileView(
@@ -493,9 +643,22 @@ const Chat = () => {
                             <span className="flex items-baseline justify-between gap-2">
                               <span className="truncate text-xs font-semibold text-white">
                                 {name}
+                                {handle ? (
+                                  <span className="ml-1 font-normal text-slate-500">
+                                    @{handle}
+                                  </span>
+                                ) : null}
                               </span>
-                              <span className="shrink-0 text-[9px] text-slate-600">
-                                {timeAgo(conversation.message.$createdAt)}
+                              <span className="flex shrink-0 items-center gap-1.5">
+                                {unread.has(conversation.userId) ? (
+                                  <span
+                                    className="h-1.5 w-1.5 rounded-full bg-emerald-400"
+                                    title="Unread messages"
+                                  />
+                                ) : null}
+                                <span className="text-[9px] text-slate-600">
+                                  {timeAgo(conversation.message.$createdAt)}
+                                </span>
                               </span>
                             </span>
                             <span className="mt-0.5 block truncate text-[11px] text-slate-500">
@@ -543,30 +706,40 @@ const Chat = () => {
                     to={`/profile/${recipientId}`}
                     className="flex min-w-0 flex-1 items-center gap-3 rounded-xl transition hover:opacity-90"
                   >
-                    {profileLoading && !headerProfile ? (
+                    {profileLoading &&
+                    !headerProfile?.name &&
+                    !headerProfile?.username ? (
                       <span className="h-10 w-10 animate-pulse rounded-full bg-white/[0.07]" />
                     ) : (
-                      <Avatar
-                        name={headerName}
-                        src={
-                          headerProfile?.avatarFileId
-                            ? appwriteService.getFileView(
-                                headerProfile.avatarFileId,
-                              )
-                            : ""
-                        }
-                        size="md"
-                      />
+                      <span className="relative">
+                        <Avatar
+                          name={headerAvatarName}
+                          src={
+                            headerProfile?.avatarFileId
+                              ? appwriteService.getFileView(
+                                  headerProfile.avatarFileId,
+                                )
+                              : ""
+                          }
+                          size="md"
+                        />
+                        {liveState === "live" ? (
+                          <span
+                            className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-night bg-emerald-400"
+                            title="Realtime connection active"
+                          />
+                        ) : null}
+                      </span>
                     )}
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-semibold text-white">
                         {headerName}
                       </span>
                       <span className="flex items-center gap-1 text-[10px] text-slate-500">
-                        {headerProfile?.username ? (
+                        {headerUsername ? (
                           <>
                             <AtSign className="h-2.5 w-2.5" />
-                            {headerProfile.username}
+                            {headerUsername}
                           </>
                         ) : (
                           "View public profile"
