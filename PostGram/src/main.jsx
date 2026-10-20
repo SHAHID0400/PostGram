@@ -1,20 +1,32 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
 import "./index.css";
 import { Provider } from "react-redux";
 import store from "./store/store.js";
-import { RouterProvider, createBrowserRouter } from "react-router-dom";
-import Home from "./pages/Home.jsx";
-import { AuthLayout, Login } from "./components/index.js";
+import { Navigate, RouterProvider, createBrowserRouter } from "react-router-dom";
+import AuthLayout from "./components/AuthLayout.jsx";
+import ErrorBoundary from "./components/system/ErrorBoundary.jsx";
 
-import Addpost from "./pages/Addpost";
+const Home = lazy(() => import("./pages/Home.jsx"));
+const Login = lazy(() => import("./components/Login.jsx"));
+const Signup = lazy(() => import("./pages/SignUp.jsx"));
+const Dashboard = lazy(() => import("./pages/Dashboard.jsx"));
+const Explore = lazy(() => import("./pages/Explore.jsx"));
+const Profile = lazy(() => import("./pages/Profile.jsx"));
+const UserProfile = lazy(() => import("./pages/UserProfile.jsx"));
+const Chat = lazy(() => import("./pages/Chat.jsx"));
+const Creator = lazy(() => import("./pages/Creator.jsx"));
+const Studio = lazy(() => import("./pages/Studio"));
+const EditPost = lazy(() => import("./pages/EditPost"));
+const Post = lazy(() => import("./pages/Post"));
 
-import EditPost from "./pages/EditPost";
-
-import Post from "./pages/Post";
-import Signup from "./pages/SingUp.jsx";
-import AllPosts from "./pages/AllPosts.jsx";
+const RouteLoading = () => (
+  <div className="grid min-h-screen place-items-center bg-night">
+    <span className="h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-violet-400" />
+    <span className="sr-only">Loading PostGram</span>
+  </div>
+);
 
 const router = createBrowserRouter([
   {
@@ -42,11 +54,70 @@ const router = createBrowserRouter([
         ),
       },
       {
-        path: "/all-posts",
+        path: "/dashboard",
         element: (
           <AuthLayout authentication>
-            {" "}
-            <AllPosts />
+            <Dashboard />
+          </AuthLayout>
+        ),
+      },
+      {
+        path: "/explore",
+        element: (
+          <AuthLayout authentication>
+            <Explore />
+          </AuthLayout>
+        ),
+      },
+      {
+        path: "/profile",
+        element: (
+          <AuthLayout authentication>
+            <Profile />
+          </AuthLayout>
+        ),
+      },
+      {
+        path: "/profile/:userId",
+        element: (
+          <AuthLayout authentication>
+            <UserProfile />
+          </AuthLayout>
+        ),
+      },
+      {
+        path: "/chat",
+        element: (
+          <AuthLayout authentication>
+            <Chat />
+          </AuthLayout>
+        ),
+      },
+      {
+        path: "/chat/:recipientId",
+        element: (
+          <AuthLayout authentication>
+            <Chat />
+          </AuthLayout>
+        ),
+      },
+      {
+        path: "/creator/:userId",
+        element: (
+          <AuthLayout authentication>
+            <Creator />
+          </AuthLayout>
+        ),
+      },
+      {
+        path: "/all-posts",
+        element: <Navigate to="/explore" replace />,
+      },
+      {
+        path: "/studio",
+        element: (
+          <AuthLayout authentication>
+            <Studio />
           </AuthLayout>
         ),
       },
@@ -54,8 +125,7 @@ const router = createBrowserRouter([
         path: "/add-post",
         element: (
           <AuthLayout authentication>
-            {" "}
-            <Addpost />
+            <Studio />
           </AuthLayout>
         ),
       },
@@ -63,7 +133,6 @@ const router = createBrowserRouter([
         path: "/edit-post/:slug",
         element: (
           <AuthLayout authentication>
-            {" "}
             <EditPost />
           </AuthLayout>
         ),
@@ -72,17 +141,18 @@ const router = createBrowserRouter([
         path: "/post/:slug",
         element: <Post />,
       },
-
-      {
-      }
     ],
   },
 ]);
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <Provider store={store}>
-      <RouterProvider router={router} />
-    </Provider>
+    <ErrorBoundary>
+      <Provider store={store}>
+        <Suspense fallback={<RouteLoading />}>
+          <RouterProvider router={router} />
+        </Suspense>
+      </Provider>
+    </ErrorBoundary>
   </React.StrictMode>,
 );

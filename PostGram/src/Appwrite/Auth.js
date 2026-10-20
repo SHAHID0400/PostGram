@@ -1,4 +1,5 @@
 import conf from "../conf/confi";
+import { sanitizeText, sanitizeUsername } from "../lib/security";
 import { Client, Account , ID } from "appwrite";
 
 export class AuthService {
@@ -13,47 +14,81 @@ export class AuthService {
     }
 
     async CreateAccount({email,password,name}){
-        try {
-            const userAccount = await this.account.create( ID.unique(),email,password,name);
-            if(userAccount){
-                // call another method
-                return this.Login({email,password});
-                
-            }else{
-                return userAccount;
-            }
-            
-        } catch (error) {
-            throw error;
+        const userAccount = await this.account.create(
+            ID.unique(),
+            email,
+            password,
+            sanitizeText(name, 128),
+        );
+
+        if(!userAccount){
+            return userAccount;
         }
+
+        return this.Login({email,password});
     }
 
      async Login({email,password}){
-        try {
-             return await this.account.createEmailPasswordSession(email, password);
-        } catch (error) {
-            throw error;
-        }
+        return this.account.createEmailPasswordSession(email, password);
+     }
 
-}
      async getcurrentUser(){
         try {
             return await this.account.get();
         } catch (error) {
             if(error.code === 401){
-                // user not logged in
                 return null;
             }
-            // console.log("Appwrite service :: getcurrentUser :: error",error);
-            // return null;
+            throw error;
         }
-        return null;
      }
+
+     async updateName(name){
+        return await this.account.updateName(name);
+     }
+
+     async getPrefs(){
+        return await this.account.getPrefs();
+     }
+
+     async updatePrefs(prefs){
+        return await this.account.updatePrefs(prefs);
+     }
+
+     /**
+      * Single source of truth for profile updates.
+      * Merges prefs (username, bio, avatarFileId) and updates the account name.
+      */
+     async saveProfile({ name, username = "", bio = "", avatarFileId = "" }){
+        const cleanName = sanitizeText(name, 128);
+        const cleanUsername = sanitizeUsername(username);
+        const cleanBio = sanitizeText(bio, 160);
+
+        if (cleanName) {
+            await this.account.updateName(cleanName);
+        }
+
+        const currentPrefs = (await this.account.getPrefs()) || {};
+        await this.account.updatePrefs({
+            ...currentPrefs,
+            username: cleanUsername,
+            bio: cleanBio,
+            avatarFileId,
+        });
+
+        return {
+            name: cleanName,
+            username: cleanUsername,
+            bio: cleanBio,
+            avatarFileId,
+        };
+     }
+
         async Logout(){
             try {
                 await this.account.deleteSessions();
             } catch (error) {
-                console.log("Appwrite service :: Logout :: error",error);
+                // The local session is cleared by the caller.
             }
         }
 }

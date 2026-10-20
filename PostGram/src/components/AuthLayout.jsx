@@ -1,24 +1,23 @@
-import React, { useEffect, useState } from 'react'
-import { useSelector } from 'react-redux';
-import { useNavigate } from 'react-router-dom';
- const Protected = ({children,authentication=true}) => {
-    const navigate=useNavigate()
-    const [loader, setloader] = useState(true)
-    const authStatus = useSelector(state =>state.auth.status)
+import { useSelector } from "react-redux";
+import { Navigate } from "react-router-dom";
 
-    useEffect(()=>{
-        // make it more easy
-        if(authentication && authStatus !==authentication){
-            navigate("/login")
-        }else if(!authentication && authStatus !==authentication){
-            navigate("/login")
-        }
-        setloader(false)
+/**
+ * Route guard for authenticated and guest-only routes.
+ * - authentication={true}: requires a signed-in user.
+ * - authentication={false}: only for guests (login / signup).
+ */
+const AuthLayout = ({ children, authentication = true }) => {
+  const authStatus = useSelector((state) => state.auth?.status);
 
-    },[authStatus,navigate,authentication])
+  if (authentication && !authStatus) {
+    return <Navigate to="/login" replace />;
+  }
 
-  return loader ? <h1>Loading...</h1> :<>{children}</>
-  
-}
+  if (!authentication && authStatus) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
-export default Protected; 
+  return children;
+};
+
+export default AuthLayout;
