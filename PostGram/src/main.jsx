@@ -7,6 +7,8 @@ import store from "./store/store.js";
 import { Navigate, RouterProvider, createBrowserRouter } from "react-router-dom";
 import AuthLayout from "./components/AuthLayout.jsx";
 import ErrorBoundary from "./components/system/ErrorBoundary.jsx";
+import { ProfilesProvider } from "./context/ProfilesContext.jsx";
+import { CommentsProvider } from "./context/CommentsContext.jsx";
 
 const Home = lazy(() => import("./pages/Home.jsx"));
 const Login = lazy(() => import("./components/Login.jsx"));
@@ -149,9 +151,13 @@ ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <ErrorBoundary>
       <Provider store={store}>
-        <Suspense fallback={<RouteLoading />}>
-          <RouterProvider router={router} />
-        </Suspense>
+        <ProfilesProvider>
+          <CommentsProvider>
+            <Suspense fallback={<RouteLoading />}>
+              <RouterProvider router={router} />
+            </Suspense>
+          </CommentsProvider>
+        </ProfilesProvider>
       </Provider>
     </ErrorBoundary>
   </React.StrictMode>,

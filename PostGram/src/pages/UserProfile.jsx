@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import appwriteService from "../Appwrite/config";
 import { toUserMessage } from "../lib/errors";
+import { useProfiles } from "../context/ProfilesContext";
+import useRealtimeFeed from "../hooks/useRealtimeFeed";
 import ExplorePostModal from "../components/explore/ExplorePostModal";
 import { MobileDock } from "../components/dashboard/Sidebar";
 import { Avatar, timeAgo } from "../components/dashboard/ui";
@@ -23,6 +25,7 @@ import { Avatar, timeAgo } from "../components/dashboard/ui";
 const UserProfile = () => {
   const { userId } = useParams();
   const userData = useSelector((state) => state.auth?.userData);
+  const { profiles, ensureProfiles, followsVersion } = useProfiles();
 
   const [profile, setProfile] = useState(null);
   const [posts, setPosts] = useState([]);
@@ -82,6 +85,79 @@ const UserProfile = () => {
     };
   }, [userId, userData?.$id, isSelf]);
 
+  // This creator's moments stream in live, including likes and deletes.
+  useRealtimeFeed(({ document, events }) => {
+    if (!userId || document.userId !== userId) return;
+
+    const isCreate = events.some((event) => event.endsWith(".create"));
+    const isUpdate = events.some((event) => event.endsWith(".update"));
+    const isDelete = events.some((event) => event.endsWith(".delete"));
+    const inactive = document.status && document.status !== "active";
+
+    setPosts((current) => {
+      if (isDelete) {
+        return current.filter((post) => post.$id !== document.$id);
+      }
+
+      if (isCreate) {
+        if (inactive) return current;
+
+        return current.some((post) => post.$id === document.$id)
+          ? current.map((post) =>
+              post.$id === document.$id ? { ...post, ...document } : post,
+            )
+          : [document, ...current];
+      }
+
+      if (isUpdate) {
+        if (inactive) {
+          return current.filter((post) => post.$id !== document.$id);
+        }
+
+        return current.map((post) =>
+          post.$id === document.$id ? { ...post, ...document } : post,
+        );
+      }
+
+      return current;
+    });
+
+    setSelectedPost((current) => {
+      if (current?.$id !== document.$id) return current;
+      return isDelete ? null : { ...current, ...document };
+    });
+  });
+
+  // Hydrate this creator through the shared cache so profile edits stream in
+  // from Appwrite realtime without another page load.
+  useEffect(() => {
+    if (userId) ensureProfiles([userId]);
+  }, [userId, ensureProfiles]);
+
+  // Follow counts refresh whenever the follows collection streams an event.
+  useEffect(() => {
+    if (!userId || !followsVersion) return undefined;
+
+    let cancelled = false;
+    appwriteService
+      .getFollowStats(userId)
+      .then((stats) => {
+        if (cancelled) return;
+        setFollowSupported(stats.supported);
+        setFollowStats({
+          followers: stats.followers,
+          following: stats.following,
+        });
+      })
+      .catch(() => {
+        // Counts stay as the last known values.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, followsVersion]);
+
   if (!userId) return <Navigate to="/explore" replace />;
   if (isSelf) return <Navigate to="/profile" replace />;
 
@@ -139,11 +215,28 @@ const UserProfile = () => {
     );
   };
 
-  const displayName = profile?.name || "PostGram creator";
-  const avatarFileId = profile?.avatarFileId || "";
-  const username = String(profile?.username || "").replace(/^@+/, "");
+  const liveProfile = userId ? profiles[userId] : null;
+  const viewProfile = liveProfile
+    ? {
+        ...profile,
+        ...liveProfile,
+        name: liveProfile.name || profile?.name || "",
+        username: liveProfile.username || profile?.username || "",
+        bio: liveProfile.bio || profile?.bio || "",
+        avatarFileId:
+          liveProfile.avatarFileId || profile?.avatarFileId || "",
+        hasProfile: Boolean(liveProfile.hasProfile || profile?.hasProfile),
+      }
+    : profile;
+  const displayName = viewProfile?.name || "PostGram creator";
+  const avatarFileId = viewProfile?.avatarFileId || "";
+  const username = String(viewProfile?.username || "").replace(/^@+/, "");
   const notFound =
-    !loading && !error && !profile?.hasProfile && !profile?.name && posts.length === 0;
+    !loading &&
+    !error &&
+    !viewProfile?.hasProfile &&
+    !viewProfile?.name &&
+    posts.length === 0;
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-night text-slate-200">
@@ -241,9 +334,9 @@ const UserProfile = () => {
                 </p>
               ) : null}
 
-              {profile?.bio ? (
+              {viewProfile?.bio ? (
                 <p className="mx-auto mt-3 max-w-md whitespace-pre-line text-sm leading-relaxed text-slate-400">
-                  {profile.bio}
+                  {viewProfile.bio}
                 </p>
               ) : (
                 <p className="mx-auto mt-3 max-w-md text-xs leading-relaxed text-slate-500">
@@ -431,6 +524,7 @@ const UserProfile = () => {
           <ExplorePostModal
             post={selectedPost}
             user={userData}
+            authorProfile={profiles[selectedPost.userId]}
             onClose={() => setSelectedPost(null)}
             onUpdate={handleUpdatePost}
           />

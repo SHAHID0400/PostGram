@@ -15,6 +15,9 @@ import {
 } from "lucide-react";
 import appwriteService from "../Appwrite/config";
 import logo from "../assets/plogo.png";
+import { useProfiles } from "../context/ProfilesContext";
+import { useComments } from "../context/CommentsContext";
+import useRealtimeFeed from "../hooks/useRealtimeFeed";
 import ExplorePostModal from "../components/explore/ExplorePostModal";
 import UserSearch from "../components/search/UserSearch";
 import { MobileDock } from "../components/dashboard/Sidebar";
@@ -30,6 +33,12 @@ const PAGE_SIZE = 24;
 const Explore = () => {
   const navigate = useNavigate();
   const userData = useSelector((state) => state.auth?.userData);
+  const { profiles, ensureProfiles } = useProfiles();
+  const {
+    supported: commentsCollectionSupported,
+    ensureComments,
+    getComments,
+  } = useComments();
 
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -128,9 +137,13 @@ const Explore = () => {
 
     posts.forEach((post) => {
       if (!post.userId) return;
+      const profile = profiles[post.userId];
       const entry = map.get(post.userId) || {
         userId: post.userId,
-        name: post.name || "PostGram creator",
+        name: profile?.name || post.name || "PostGram creator",
+        username: profile?.username || "",
+        avatarFileId: profile?.avatarFileId || "",
+        avatarUrl: profile?.avatarUrl || "",
         count: 0,
       };
       entry.count += 1;
@@ -141,7 +154,78 @@ const Explore = () => {
     return [...map.values()]
       .sort((first, second) => second.count - first.count)
       .slice(0, 12);
-  }, [posts]);
+  }, [posts, profiles]);
+
+  // Resolve every explore author through the shared realtime profiles cache.
+  const authorKey = useMemo(
+    () =>
+      [...new Set(posts.map((post) => post.userId).filter(Boolean))].join("|"),
+    [posts],
+  );
+
+  useEffect(() => {
+    if (authorKey) ensureProfiles(authorKey.split("|"));
+  }, [authorKey, ensureProfiles]);
+
+  // Load every visible moment's comments in one batched request.
+  const postKey = useMemo(
+    () => posts.map((post) => post.$id).filter(Boolean).join("|"),
+    [posts],
+  );
+
+  useEffect(() => {
+    if (!postKey || commentsCollectionSupported === false) return;
+    ensureComments(postKey.split("|"));
+  }, [postKey, commentsCollectionSupported, ensureComments]);
+
+  const commentCountFor = (post) => {
+    const remote =
+      commentsCollectionSupported === false
+        ? 0
+        : getComments(post.$id).length;
+    return remote + parseComments(post.comments).length;
+  };
+
+  // Live moments: new posts, edits, likes and deletes stream in without reload.
+  useRealtimeFeed(({ document, events }) => {
+    const isCreate = events.some((event) => event.endsWith(".create"));
+    const isUpdate = events.some((event) => event.endsWith(".update"));
+    const isDelete = events.some((event) => event.endsWith(".delete"));
+    const inactive = document.status && document.status !== "active";
+
+    setPosts((current) => {
+      if (isDelete) {
+        return current.filter((post) => post.$id !== document.$id);
+      }
+
+      if (isCreate) {
+        if (inactive) return current;
+
+        return current.some((post) => post.$id === document.$id)
+          ? current.map((post) =>
+              post.$id === document.$id ? { ...post, ...document } : post,
+            )
+          : [document, ...current];
+      }
+
+      if (isUpdate) {
+        if (inactive) {
+          return current.filter((post) => post.$id !== document.$id);
+        }
+
+        return current.map((post) =>
+          post.$id === document.$id ? { ...post, ...document } : post,
+        );
+      }
+
+      return current;
+    });
+
+    setSelectedPost((current) => {
+      if (current?.$id !== document.$id) return current;
+      return isDelete ? null : { ...current, ...document };
+    });
+  });
 
   const visiblePosts = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -321,7 +405,16 @@ const Explore = () => {
                     >
                       <Avatar
                         name={creator.name}
-                        src={isSelf ? avatarUrl(userData) : ""}
+                        src={
+                          isSelf
+                            ? avatarUrl(userData)
+                            : creator.avatarUrl ||
+                              (creator.avatarFileId
+                                ? appwriteService.getFileView(
+                                    creator.avatarFileId,
+                                  )
+                                : "")
+                        }
                         size="lg"
                         className="ring-2 ring-night"
                       />
@@ -329,6 +422,11 @@ const Explore = () => {
                     <span className="w-full truncate text-center text-[10px] font-medium text-slate-400">
                       {isSelf ? "You" : creator.name}
                     </span>
+                    {!isSelf && creator.username ? (
+                      <span className="max-w-full truncate text-[9px] text-violet-300/80">
+                        @{creator.username}
+                      </span>
+                    ) : null}
                     <span className="text-[9px] text-slate-600">
                       {creator.count} moment{creator.count === 1 ? "" : "s"}
                     </span>
@@ -422,8 +520,11 @@ const Explore = () => {
               {visiblePosts.map((post, index) => {
                 const featured = index % 7 === 0 && visiblePosts.length > 4;
                 const isSelf = post.userId === userData?.$id;
+                const authorProfile = profiles[post.userId];
                 const likesSupported = "likes" in post;
-                const commentsSupported = "comments" in post;
+                const commentsSupported =
+                  commentsCollectionSupported !== false ||
+                  "comments" in post;
 
                 return (
                   <motion.button
@@ -461,8 +562,17 @@ const Explore = () => {
 
                     <span className="absolute inset-0 hidden flex-col items-center justify-center gap-2.5 opacity-0 transition group-hover:flex group-hover:opacity-100 group-focus-visible:flex group-focus-visible:opacity-100">
                       <Avatar
-                        name={post.name}
-                        src={isSelf ? avatarUrl(userData) : ""}
+                        name={authorProfile?.name || post.name}
+                        src={
+                          isSelf
+                            ? avatarUrl(userData)
+                            : authorProfile?.avatarUrl ||
+                              (authorProfile?.avatarFileId
+                                ? appwriteService.getFileView(
+                                    authorProfile.avatarFileId,
+                                  )
+                                : "")
+                        }
                         size="md"
                         className="ring-2 ring-white/30"
                       />
@@ -476,7 +586,7 @@ const Explore = () => {
                         {commentsSupported ? (
                           <span className="inline-flex items-center gap-1">
                             <MessageCircle className="h-3.5 w-3.5" />
-                            {parseComments(post.comments).length}
+                            {commentCountFor(post)}
                           </span>
                         ) : null}
                         {!likesSupported && !commentsSupported ? (
@@ -522,6 +632,7 @@ const Explore = () => {
           <ExplorePostModal
             post={selectedPost}
             user={userData}
+            authorProfile={profiles[selectedPost.userId]}
             onClose={() => setSelectedPost(null)}
             onUpdate={handleUpdatePost}
           />

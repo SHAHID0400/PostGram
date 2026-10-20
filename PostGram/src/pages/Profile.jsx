@@ -21,6 +21,8 @@ import {
 import appwriteService from "../Appwrite/config";
 import authService from "../Appwrite/Auth";
 import { toUserMessage } from "../lib/errors";
+import { useProfiles } from "../context/ProfilesContext";
+import useRealtimeFeed from "../hooks/useRealtimeFeed";
 import { logout, updateUser } from "../store/authSlice";
 import { cropSquareAvatar } from "../components/profile/avatarCrop";
 import { MobileDock } from "../components/dashboard/Sidebar";
@@ -36,6 +38,7 @@ const Profile = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const userData = useSelector((state) => state.auth?.userData);
+  const { setProfile } = useProfiles();
   const inputRef = useRef(null);
 
   const [posts, setPosts] = useState([]);
@@ -127,6 +130,44 @@ const Profile = () => {
     };
   }, [userData?.$id]);
 
+  // Your moments stream in live: new posts, edits, likes and deletes.
+  useRealtimeFeed(({ document, events }) => {
+    if (!userData?.$id || document.userId !== userData.$id) return;
+
+    const isCreate = events.some((event) => event.endsWith(".create"));
+    const isUpdate = events.some((event) => event.endsWith(".update"));
+    const isDelete = events.some((event) => event.endsWith(".delete"));
+    const inactive = document.status && document.status !== "active";
+
+    setPosts((current) => {
+      if (isDelete) {
+        return current.filter((post) => post.$id !== document.$id);
+      }
+
+      if (isCreate) {
+        if (inactive) return current;
+
+        return current.some((post) => post.$id === document.$id)
+          ? current.map((post) =>
+              post.$id === document.$id ? { ...post, ...document } : post,
+            )
+          : [document, ...current];
+      }
+
+      if (isUpdate) {
+        if (inactive) {
+          return current.filter((post) => post.$id !== document.$id);
+        }
+
+        return current.map((post) =>
+          post.$id === document.$id ? { ...post, ...document } : post,
+        );
+      }
+
+      return current;
+    });
+  });
+
   useEffect(() => {
     if (!toast) return undefined;
     const timeout = setTimeout(() => setToast(""), 3000);
@@ -188,6 +229,12 @@ const Profile = () => {
       });
 
       dispatch(updateUser({ avatarFileId: uploadedId }));
+      setProfile(userData.$id, {
+        name: userData?.name || "",
+        username: userData?.username || "",
+        bio: userData?.bio || "",
+        avatarFileId: uploadedId,
+      });
 
       if (userData?.avatarFileId && userData.avatarFileId !== uploadedId) {
         appwriteService.deleteFile(userData.avatarFileId).catch(() => {});
@@ -266,6 +313,13 @@ const Profile = () => {
           bio: cleanBio,
         }),
       );
+
+      setProfile(userData.$id, {
+        name: values.cleanName,
+        username: values.cleanUsername,
+        bio: cleanBio,
+        avatarFileId: userData?.avatarFileId || "",
+      });
 
       setEditing(false);
       setToast("Profile updated.");

@@ -4,6 +4,7 @@ import { useSelector } from "react-redux";
 import { motion } from "framer-motion";
 import { ArrowLeft, Camera, Loader2, Sparkles } from "lucide-react";
 import appwriteService from "../Appwrite/config";
+import { useProfiles } from "../context/ProfilesContext";
 import { MobileDock } from "../components/dashboard/Sidebar";
 import { Avatar, avatarUrl, timeAgo } from "../components/dashboard/ui";
 
@@ -11,6 +12,7 @@ const Creator = () => {
   const { userId } = useParams();
   const navigate = useNavigate();
   const userData = useSelector((state) => state.auth?.userData);
+  const { profiles, ensureProfiles } = useProfiles();
   const isSelf = userId === userData?.$id;
 
   const [posts, setPosts] = useState([]);
@@ -45,7 +47,22 @@ const Creator = () => {
     };
   }, [userId, navigate]);
 
-  const name = posts[0]?.name || (isSelf ? userData?.name : "") || "PostGram creator";
+  useEffect(() => {
+    if (userId) ensureProfiles([userId]);
+  }, [userId, ensureProfiles]);
+
+  const creatorProfile = userId ? profiles[userId] : null;
+  const name =
+    (isSelf ? userData?.name : creatorProfile?.name) ||
+    posts[0]?.name ||
+    (isSelf ? userData?.name : "") ||
+    "PostGram creator";
+  const avatarSrc = isSelf
+    ? avatarUrl(userData)
+    : creatorProfile?.avatarUrl ||
+      (creatorProfile?.avatarFileId
+        ? appwriteService.getFileView(creatorProfile.avatarFileId)
+        : "");
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-night text-slate-200">
@@ -78,7 +95,7 @@ const Creator = () => {
           <span className="rounded-full bg-linear-to-br from-violet-500 via-fuchsia-500 to-cyan-400 p-[2px]">
             <Avatar
               name={name}
-              src={isSelf ? avatarUrl(userData) : ""}
+              src={avatarSrc}
               size="xl"
               className="ring-2 ring-night-soft"
             />
@@ -93,11 +110,16 @@ const Creator = () => {
               ? "Loading moments…"
               : `${posts.length} published moment${posts.length === 1 ? "" : "s"}`}
           </p>
-          <p className="mt-3 max-w-md text-xs leading-relaxed text-slate-500">
-            This profile is built from real posts in the database. Creator bios
-            and avatars are private to each Appwrite account, so only names and
-            moments are public here.
-          </p>
+          {creatorProfile?.username ? (
+            <p className="mt-1 text-[11px] font-medium text-violet-300">
+              @{String(creatorProfile.username).replace(/^@+/, "")}
+            </p>
+          ) : null}
+          {creatorProfile?.bio ? (
+            <p className="mt-3 max-w-md whitespace-pre-line text-xs leading-relaxed text-slate-400">
+              {creatorProfile.bio}
+            </p>
+          ) : null}
 
           {posts.length > 0 ? (
             <p className="mt-2 text-[10px] text-slate-600">

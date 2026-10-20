@@ -7,6 +7,7 @@ const conf={
     appwriteProfilesCollectionId:String(import.meta.env.VITE_APPWRITE_PROFILES_COLLECTION_ID || "profiles"),
     appwriteFollowsCollectionId:String(import.meta.env.VITE_APPWRITE_FOLLOWS_COLLECTION_ID || "follows"),
     appwriteMessagesCollectionId:String(import.meta.env.VITE_APPWRITE_MESSAGES_COLLECTION_ID || "messages"),
+    appwriteCommentsCollectionId:String(import.meta.env.VITE_APPWRITE_COMMENTS_COLLECTION_ID || "comments"),
 }
 
 

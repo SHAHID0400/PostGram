@@ -12,6 +12,9 @@ import {
   Trash2,
 } from "lucide-react";
 import appwriteService from "../Appwrite/config";
+import { useProfiles } from "../context/ProfilesContext";
+import { useComments } from "../context/CommentsContext";
+import useRealtimeFeed from "../hooks/useRealtimeFeed";
 import {
   Avatar,
   ConfirmDialog,
@@ -25,6 +28,12 @@ const Post = () => {
   const { slug } = useParams();
   const navigate = useNavigate();
   const userData = useSelector((state) => state.auth?.userData);
+  const { profiles, ensureProfiles } = useProfiles();
+  const {
+    supported: commentsCollectionSupported,
+    ensureComments,
+    getComments,
+  } = useComments();
 
   const [post, setPost] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -34,9 +43,20 @@ const Post = () => {
 
   const isOwner = Boolean(post && userData && post.userId === userData.$id);
   const likesSupported = Boolean(post && "likes" in post);
-  const commentsSupported = Boolean(post && "comments" in post);
-  const commentCount = parseComments(post?.comments).length;
+  const commentsSupported = Boolean(
+    post && (commentsCollectionSupported !== false || "comments" in post),
+  );
+  const commentCount = post
+    ? (commentsCollectionSupported === false ? 0 : getComments(post.$id).length) +
+      parseComments(post.comments).length
+    : 0;
   const caption = stripHtml(post?.content) || stripHtml(post?.title);
+
+  useEffect(() => {
+    if (post?.$id && commentsCollectionSupported !== false) {
+      ensureComments([post.$id]);
+    }
+  }, [post?.$id, commentsCollectionSupported, ensureComments]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,6 +85,36 @@ const Post = () => {
       cancelled = true;
     };
   }, [slug, navigate]);
+
+  useEffect(() => {
+    if (post?.userId) ensureProfiles([post.userId]);
+  }, [post?.userId, ensureProfiles]);
+
+  // Likes, comment counts, edits and deletion reach this view live.
+  useRealtimeFeed(({ document, events }) => {
+    if (!post || document.$id !== post.$id) return;
+
+    if (events.some((event) => event.endsWith(".delete"))) {
+      navigate("/explore", { replace: true });
+      return;
+    }
+
+    setPost((current) =>
+      current?.$id === document.$id ? { ...current, ...document } : current,
+    );
+  });
+
+  const authorProfile = post?.userId ? profiles[post.userId] : null;
+  const authorName =
+    (isOwner && userData?.name ? userData.name : authorProfile?.name) ||
+    post?.name ||
+    "PostGram creator";
+  const authorAvatar = isOwner
+    ? avatarUrl(userData)
+    : authorProfile?.avatarUrl ||
+      (authorProfile?.avatarFileId
+        ? appwriteService.getFileView(authorProfile.avatarFileId)
+        : "");
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -146,15 +196,15 @@ const Post = () => {
         <header className="flex items-center gap-3 p-4">
           <span className="rounded-full bg-linear-to-br from-violet-500 via-fuchsia-500 to-cyan-400 p-[2px]">
             <Avatar
-              name={isOwner ? userData?.name : post.name}
-              src={isOwner ? avatarUrl(userData) : ""}
+              name={authorName}
+              src={authorAvatar}
               size="md"
               className="ring-2 ring-night-soft"
             />
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-white">
-              {(isOwner ? userData?.name : post.name) || "PostGram creator"}
+              {authorName}
             </p>
             <p className="flex items-center gap-1.5 text-[11px] text-slate-500">
               <span>{timeAgo(post.$createdAt)}</span>

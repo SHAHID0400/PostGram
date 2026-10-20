@@ -18,6 +18,7 @@ import {
 import appwriteService from "../Appwrite/config";
 import conf from "../conf/confi";
 import { toUserMessage } from "../lib/errors";
+import { useProfiles } from "../context/ProfilesContext";
 import { MobileDock } from "../components/dashboard/Sidebar";
 import { Avatar, timeAgo } from "../components/dashboard/ui";
 
@@ -105,6 +106,7 @@ const Chat = () => {
   const { recipientId } = useParams();
   const navigate = useNavigate();
   const userData = useSelector((state) => state.auth?.userData);
+  const { profiles, ensureProfiles } = useProfiles();
 
   const [conversations, setConversations] = useState([]);
   const [listLoading, setListLoading] = useState(true);
@@ -173,6 +175,20 @@ const Chat = () => {
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
+
+  // Keep every participant resolved through the shared realtime profile cache.
+  const conversationKey = conversations
+    .map((conversation) => conversation.userId)
+    .filter(Boolean)
+    .join("|");
+
+  useEffect(() => {
+    if (conversationKey) ensureProfiles(conversationKey.split("|"));
+  }, [conversationKey, ensureProfiles]);
+
+  useEffect(() => {
+    if (recipientId) ensureProfiles([recipientId]);
+  }, [recipientId, ensureProfiles]);
 
   // Load the recipient profile and the real message history.
   useEffect(() => {
@@ -420,8 +436,15 @@ const Chat = () => {
     (conversation) => conversation.userId === recipientId,
   );
 
+  const cachedRecipientProfile =
+    recipientId && profiles[recipientId]?.hasProfile
+      ? profiles[recipientId]
+      : null;
+
   const headerProfile = mergeProfile(
-    activeProfile,
+    cachedRecipientProfile
+      ? { ...(activeProfile || {}), ...cachedRecipientProfile }
+      : activeProfile,
     activeConversation?.profile,
     recipientId,
   );
@@ -608,13 +631,23 @@ const Chat = () => {
               ) : (
                 <ul className="space-y-1">
                   {conversations.map((conversation) => {
-                    const person = conversation.profile;
+                    const cached = profiles[conversation.userId]?.hasProfile
+                      ? profiles[conversation.userId]
+                      : null;
+                    const person = cached
+                      ? { ...conversation.profile, ...cached }
+                      : conversation.profile;
                     const handle = handleOf(person?.username);
                     const name =
                       person?.name ||
                       (handle ? `@${handle}` : "PostGram member");
                     const avatarName =
                       person?.name || handle || "PostGram member";
+                    const avatarSrc =
+                      person?.avatarUrl ||
+                      (person?.avatarFileId
+                        ? appwriteService.getFileView(person.avatarFileId)
+                        : "");
                     const active = conversation.userId === recipientId;
                     const isMine = conversation.message.senderId === userData?.$id;
 
@@ -630,13 +663,7 @@ const Chat = () => {
                         >
                           <Avatar
                             name={avatarName}
-                            src={
-                              person?.avatarFileId
-                                ? appwriteService.getFileView(
-                                    person.avatarFileId,
-                                  )
-                                : ""
-                            }
+                            src={avatarSrc}
                             size="md"
                           />
                           <span className="min-w-0 flex-1">

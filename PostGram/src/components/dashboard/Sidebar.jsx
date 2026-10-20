@@ -238,12 +238,27 @@ export const DashboardRail = ({
               const isActive = activeAuthor === creator.userId;
               return (
                 <div key={creator.userId} className="flex items-center gap-3">
-                  <Avatar name={creator.name} size="sm" />
+                  <Avatar
+                    name={creator.name}
+                    src={
+                      creator.avatarUrl ||
+                      (creator.avatarFileId
+                        ? avatarUrl(creator)
+                        : "")
+                    }
+                    size="sm"
+                  />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-semibold text-white">
                       {creator.name}
                     </p>
-                    <p className="text-[10px] text-slate-500">
+                    <p className="truncate text-[10px] text-slate-500">
+                      {creator.username ? (
+                        <span className="text-violet-300/80">
+                          @{creator.username}
+                        </span>
+                      ) : null}
+                      {creator.username ? " · " : null}
                       {typeof count === "number"
                         ? `${count} moment${count === 1 ? "" : "s"}`
                         : count === null

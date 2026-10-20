@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Heart,
+  Loader2,
   Lock,
   MapPin,
   MessageCircle,
@@ -11,31 +12,61 @@ import {
   X,
 } from "lucide-react";
 import appwriteService from "../../Appwrite/config";
+import usePostComments from "../../hooks/usePostComments";
 import { sanitizeText } from "../../lib/security";
-import {
-  Avatar,
-  avatarUrl,
-  parseComments,
-  stripHtml,
-  timeAgo,
-} from "../dashboard/ui";
+import { Avatar, avatarUrl, stripHtml, timeAgo } from "../dashboard/ui";
 
-const ExplorePostModal = ({ post, user, onClose, onUpdate }) => {
+const ExplorePostModal = ({ post, user, authorProfile, onClose, onUpdate }) => {
   const [draft, setDraft] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [liking, setLiking] = useState(false);
-  const [error, setError] = useState("");
+  const [likeError, setLikeError] = useState("");
+
+  // The modal only owns local post state, so it persists embedded comments
+  // itself when the dedicated collection is unavailable.
+  const handleEmbeddedComment = async (targetPost, nextValue) => {
+    onUpdate({ ...targetPost, comments: nextValue });
+
+    try {
+      await appwriteService.updatePostComments(targetPost.$id, nextValue);
+    } catch (persistError) {
+      onUpdate(targetPost);
+      throw persistError;
+    }
+  };
+
+  const {
+    comments,
+    count,
+    supported: commentsSupported,
+    submitting,
+    error: commentError,
+    clearError,
+    submit,
+    nameFor,
+    usernameFor,
+    avatarFor,
+  } = usePostComments({
+    post,
+    user,
+    onEmbeddedComment: handleEmbeddedComment,
+  });
 
   const likesSupported = "likes" in post;
   const likes = Array.isArray(post.likes) ? post.likes : [];
   const liked = Boolean(user?.$id && likes.includes(user.$id));
 
-  const commentsSupported = "comments" in post;
-  const comments = commentsSupported ? parseComments(post.comments) : [];
-
   const isOwner = Boolean(user?.$id && post.userId === user.$id);
-  const authorName = isOwner && user?.name ? user.name : post.name;
-  const authorAvatar = isOwner ? avatarUrl(user) : "";
+  const authorName =
+    (isOwner && user?.name ? user.name : authorProfile?.name) || post.name;
+  const authorUsername = isOwner
+    ? String(user?.username || "").replace(/^@+/, "")
+    : String(authorProfile?.username || "").replace(/^@+/, "");
+  const authorAvatar = isOwner
+    ? avatarUrl(user)
+    : authorProfile?.avatarUrl ||
+      (authorProfile?.avatarFileId
+        ? appwriteService.getFileView(authorProfile.avatarFileId)
+        : "");
   const caption = stripHtml(post.content) || stripHtml(post.title);
 
   useEffect(() => {
@@ -61,13 +92,14 @@ const ExplorePostModal = ({ post, user, onClose, onUpdate }) => {
       : [...likes, user.$id];
 
     setLiking(true);
+    setLikeError("");
     onUpdate({ ...post, likes: next });
 
     try {
       await appwriteService.updatePostLikes(post.$id, next);
-    } catch (likeError) {
+    } catch (likeFailure) {
       onUpdate({ ...post, likes });
-      setError("Couldn't save your like. Try again.");
+      setLikeError("Couldn't save your like. Try again.");
     } finally {
       setLiking(false);
     }
@@ -75,48 +107,13 @@ const ExplorePostModal = ({ post, user, onClose, onUpdate }) => {
 
   const submitComment = async (event) => {
     event.preventDefault();
-    const raw = draft.trim();
-    if (!raw || submitting || !user?.$id) return;
+    if (!draft.trim() || submitting || !user?.$id) return;
 
-    if (raw.length > 500) {
-      setError("Comments are limited to 500 characters.");
-      return;
-    }
-
-    const text = sanitizeText(raw, 500);
-
-    setSubmitting(true);
-    setError("");
-
-    const entry = {
-      id: user.$id,
-      name: user.name || "Creator",
-      text,
-      createdAt: new Date().toISOString(),
-    };
-
-    const nextValue = Array.isArray(post.comments)
-      ? [...post.comments, `${entry.name}: ${entry.text}`]
-      : JSON.stringify([...parseComments(post.comments), entry]);
-
-    if (typeof nextValue === "string" && nextValue.length > 4800) {
-      setError("This moment has reached its comment limit.");
-      setSubmitting(false);
-      return;
-    }
-
-    onUpdate({ ...post, comments: nextValue });
-
-    try {
-      await appwriteService.updatePostComments(post.$id, nextValue);
-      setDraft("");
-    } catch (commentError) {
-      onUpdate(post);
-      setError("Couldn't post your comment. Try again.");
-    } finally {
-      setSubmitting(false);
-    }
+    const posted = await submit(sanitizeText(draft, 2000));
+    if (posted) setDraft("");
   };
+
+  const error = commentError || likeError;
 
   return (
     <motion.div
@@ -172,8 +169,15 @@ const ExplorePostModal = ({ post, user, onClose, onUpdate }) => {
               />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-white">
-                {authorName || "PostGram creator"}
+              <p className="flex items-baseline gap-1.5 truncate text-sm font-semibold text-white">
+                <span className="truncate">
+                  {authorName || "PostGram creator"}
+                </span>
+                {authorUsername ? (
+                  <span className="truncate text-[10px] font-normal text-slate-500">
+                    @{authorUsername}
+                  </span>
+                ) : null}
               </p>
               <p className="text-[11px] text-slate-500">
                 {timeAgo(post.$createdAt)}
@@ -218,46 +222,51 @@ const ExplorePostModal = ({ post, user, onClose, onUpdate }) => {
               <div className="mt-5 border-t border-white/[0.07] pt-4">
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-white">
                   <MessageCircle className="h-3.5 w-3.5" />
-                  Comments ({comments.length})
+                  Comments ({count})
                 </p>
 
                 {comments.length > 0 ? (
                   <ul className="mt-3 space-y-3">
-                    {comments.map((comment, index) => {
-                      const entry =
-                        typeof comment === "string"
-                          ? { name: "", text: comment }
-                          : comment;
-                      return (
-                        <li
-                          key={`${post.$id}-comment-${index}`}
-                          className="flex gap-2.5"
-                        >
-                          <Avatar
-                            name={entry?.name || "Creator"}
-                            src={
-                              entry?.id === user?.$id ? avatarUrl(user) : ""
-                            }
-                            size="sm"
-                          />
-                          <div className="min-w-0">
-                            {entry?.name ? (
-                              <p className="text-xs font-semibold text-white">
-                                {entry.name}
-                              </p>
+                    {comments.map((comment) => (
+                      <motion.li
+                        key={comment.$id}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex gap-2.5"
+                      >
+                        <Avatar
+                          name={nameFor(comment)}
+                          src={avatarFor(comment)}
+                          size="sm"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="flex items-baseline gap-1.5 text-xs">
+                            <span className="font-semibold text-white">
+                              {nameFor(comment)}
+                            </span>
+                            {usernameFor(comment) ? (
+                              <span className="text-[10px] text-slate-500">
+                                @{usernameFor(comment)}
+                              </span>
                             ) : null}
-                            <p className="break-words text-sm text-slate-300">
-                              {entry?.text || ""}
-                            </p>
-                            {entry?.createdAt ? (
-                              <p className="mt-0.5 text-[10px] text-slate-500">
-                                {timeAgo(entry.createdAt)}
-                              </p>
-                            ) : null}
-                          </div>
-                        </li>
-                      );
-                    })}
+                            <span className="text-[10px] text-slate-500">
+                              {comment.pending
+                                ? "sending…"
+                                : timeAgo(comment.$createdAt)}
+                            </span>
+                          </p>
+                          <p
+                            className={`break-words text-sm ${
+                              comment.pending
+                                ? "text-slate-400"
+                                : "text-slate-300"
+                            }`}
+                          >
+                            {comment.text}
+                          </p>
+                        </div>
+                      </motion.li>
+                    ))}
                   </ul>
                 ) : (
                   <p className="mt-2 text-xs text-slate-500">
@@ -275,22 +284,32 @@ const ExplorePostModal = ({ post, user, onClose, onUpdate }) => {
           <div className="border-t border-white/[0.07] p-3">
             <div className="mb-2 flex items-center gap-3 text-xs text-slate-400">
               {likesSupported ? (
-                <button
+                <motion.button
                   type="button"
                   onClick={toggleLike}
                   disabled={!user?.$id || liking}
+                  whileTap={{ scale: 0.9 }}
                   aria-pressed={liked}
                   className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 transition ${
                     liked
                       ? "text-rose-400"
-                      : "hover:bg-white/5 hover:text-white"
+                      : "hover:bg-white/5 hover:text-rose-300"
                   }`}
                 >
                   <Heart
-                    className={`h-4 w-4 ${liked ? "fill-rose-400" : ""}`}
+                    className={`h-4 w-4 ${
+                      liked ? "fill-rose-500 text-rose-500" : ""
+                    }`}
                   />
-                  {likes.length}
-                </button>
+                  <span className="tabular-nums">{likes.length}</span>
+                </motion.button>
+              ) : null}
+
+              {commentsSupported ? (
+                <span className="inline-flex items-center gap-1.5 px-2 py-1">
+                  <MessageCircle className="h-4 w-4" />
+                  <span className="tabular-nums">{count}</span>
+                </span>
               ) : null}
 
               <Link
@@ -307,23 +326,31 @@ const ExplorePostModal = ({ post, user, onClose, onUpdate }) => {
                 <Avatar name={user?.name} src={avatarUrl(user)} size="sm" />
                 <input
                   value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  maxLength={500}
+                  onChange={(event) => {
+                    setDraft(event.target.value);
+                    if (commentError) clearError();
+                  }}
+                  maxLength={2000}
                   placeholder="Add a comment…"
                   className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white placeholder:text-slate-500 outline-none transition focus:border-violet-400/60"
                 />
                 <button
                   type="submit"
                   disabled={!draft.trim() || submitting}
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-linear-to-r from-violet-500 to-fuchsia-500 text-white transition disabled:cursor-not-allowed disabled:opacity-40"
+                  className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-linear-to-r from-violet-500 to-fuchsia-500 px-4 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-40"
                   aria-label="Post comment"
                 >
-                  <Send className="h-4 w-4" />
+                  {submitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )}
+                  {submitting ? "Posting" : "Post"}
                 </button>
               </form>
             ) : (
               <p className="text-[11px] text-slate-500">
-                Comments aren't enabled on this collection yet.
+                Comments aren't available for this moment yet.
               </p>
             )}
           </div>
