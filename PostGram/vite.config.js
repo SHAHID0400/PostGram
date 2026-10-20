@@ -14,11 +14,33 @@ export default defineConfig(({ mode }) => {
       reportCompressedSize: false,
       rollupOptions: {
         output: {
-          manualChunks: {
-            react: ["react", "react-dom", "react-router-dom"],
-            state: ["@reduxjs/toolkit", "react-redux"],
-            motion: ["framer-motion"],
-            appwrite: ["appwrite"],
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return undefined;
+
+            if (id.includes("appwrite")) return "appwrite";
+            if (
+              id.includes("framer-motion") ||
+              id.includes("motion-dom") ||
+              id.includes("motion-utils")
+            ) {
+              return "motion";
+            }
+            if (
+              id.includes("@reduxjs") ||
+              id.includes("react-redux") ||
+              id.includes("redux")
+            ) {
+              return "state";
+            }
+            if (
+              id.includes("react-router") ||
+              id.includes("react-dom") ||
+              id.includes("node_modules/react/")
+            ) {
+              return "react";
+            }
+
+            return "vendor";
           },
         },
       },
