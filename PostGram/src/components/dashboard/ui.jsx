@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Camera, Loader2, Trash2 } from "lucide-react";
-import appwriteService from "../../Appwrite/config";
+import { getAvatarUrl } from "../../utils/avatarHelper";
 
 export const timeAgo = (value) => {
   if (!value) return "";
@@ -59,10 +59,7 @@ export const getInitials = (name = "") => {
   return initials || "PG";
 };
 
-export const avatarUrl = (user) =>
-  user?.avatarFileId
-    ? appwriteService.getFileView(user.avatarFileId)
-    : "";
+export const avatarUrl = (user) => getAvatarUrl(user);
 
 const SIZES = {
   sm: "h-8 w-8 text-[10px]",
@@ -73,13 +70,18 @@ const SIZES = {
 };
 
 export const Avatar = ({ name, src, size = "md", className = "" }) => {
-  const [failed, setFailed] = useState(false);
+  const [failedSrc, setFailedSrc] = useState("");
+  const imageSrc =
+    typeof src === "string"
+      ? src.trim()
+      : typeof URL !== "undefined" && src instanceof URL
+        ? src.toString()
+        : "";
+  const isSupportedSrc =
+    /^(https?:\/\/|blob:|data:image\/)/i.test(imageSrc) ||
+    imageSrc.startsWith("/");
 
-  useEffect(() => {
-    setFailed(false);
-  }, [src]);
-
-  const showImage = Boolean(src) && !failed;
+  const showImage = isSupportedSrc && failedSrc !== imageSrc;
 
   return (
     <span
@@ -88,10 +90,10 @@ export const Avatar = ({ name, src, size = "md", className = "" }) => {
     >
       {showImage ? (
         <img
-          src={src}
+          src={imageSrc}
           alt={name || "Creator avatar"}
           className="h-full w-full object-cover"
-          onError={() => setFailed(true)}
+          onError={() => setFailedSrc(imageSrc)}
         />
       ) : (
         <span>{getInitials(name)}</span>

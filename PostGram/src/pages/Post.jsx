@@ -113,7 +113,7 @@ const Post = () => {
     ? avatarUrl(userData)
     : authorProfile?.avatarUrl ||
       (authorProfile?.avatarFileId
-        ? appwriteService.getFileView(authorProfile.avatarFileId)
+        ? avatarUrl(authorProfile)
         : "");
 
   useEffect(() => {

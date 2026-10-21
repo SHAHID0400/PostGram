@@ -85,6 +85,7 @@ const Login = () => {
           $id: user.$id,
           email: user.email,
           name: user.name,
+          labels: user.labels || [],
           username,
           bio: prefs.bio || "",
           avatarFileId: prefs.avatarFileId || "",

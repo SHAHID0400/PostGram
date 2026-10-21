@@ -10,6 +10,8 @@ import {
 import { useDispatch, useSelector } from "react-redux";
 import appwriteService from "../Appwrite/config";
 import { updateUser } from "../store/authSlice";
+import { getAvatarUrl } from "../utils/avatarHelper";
+import { selectPreferredProfile } from "../utils/profileResolver";
 
 const ProfilesContext = createContext(null);
 
@@ -18,33 +20,41 @@ const EMPTY_PROFILES = {};
 // A single normalised shape shared by every component that renders a creator.
 const normalizeProfileDoc = (document) => {
   const userId = document?.userId || document?.$id || "";
-  const avatarFileId = document?.avatarFileId || "";
+  const avatarFileId =
+    [document?.avatarFileId, document?.avatar, document?.imageId]
+      .map((value) => String(value || "").trim())
+      .find(Boolean) || "";
 
   return {
+    $id: document?.$id || "",
+    $createdAt: document?.$createdAt || "",
+    $updatedAt: document?.$updatedAt || "",
     userId,
     name: document?.name || document?.displayName || "",
     username: String(document?.username || "").replace(/^@+/, ""),
     bio: document?.bio || "",
     avatarFileId,
-    avatarUrl: avatarFileId
-      ? appwriteService.getFileView(avatarFileId)
-      : "",
+    avatarUrl: getAvatarUrl({ avatarFileId }),
     hasProfile: true,
   };
 };
 
 const decorateProfile = (profile = {}, userId = "") => {
-  const avatarFileId = profile.avatarFileId || "";
+  const avatarFileId =
+    [profile.avatarFileId, profile.avatar, profile.imageId]
+      .map((value) => String(value || "").trim())
+      .find(Boolean) || "";
 
   return {
+    $id: profile.$id || "",
+    $createdAt: profile.$createdAt || "",
+    $updatedAt: profile.$updatedAt || "",
     userId: profile.userId || userId,
     name: profile.name || "",
     username: String(profile.username || "").replace(/^@+/, ""),
     bio: profile.bio || "",
     avatarFileId,
-    avatarUrl: avatarFileId
-      ? appwriteService.getFileView(avatarFileId)
-      : "",
+    avatarUrl: getAvatarUrl({ avatarFileId }),
     hasProfile: Boolean(profile.hasProfile),
   };
 };
@@ -83,10 +93,9 @@ export const ProfilesProvider = ({ children }) => {
         const id = userId || value?.userId;
         if (!id) return;
 
-        next[id] = {
-          ...(current[id] || {}),
-          ...decorateProfile(value, id),
-        };
+        const incoming = decorateProfile(value, id);
+        next[id] =
+          selectPreferredProfile([current[id], incoming]) || incoming;
       });
 
       return next;
@@ -165,9 +174,13 @@ export const ProfilesProvider = ({ children }) => {
   const setProfile = useCallback(
     (userId, patch = {}) => {
       if (!userId) return;
+      const normalizedPatch = { ...patch };
+      if (patch.avatarFileId !== undefined || patch.avatar !== undefined) {
+        normalizedPatch.avatarFileId = patch.avatarFileId || patch.avatar || "";
+      }
 
       setProfiles((current) => {
-        const merged = { ...(current[userId] || {}), ...patch };
+        const merged = { ...(current[userId] || {}), ...normalizedPatch };
 
         return {
           ...current,
@@ -182,7 +195,7 @@ export const ProfilesProvider = ({ children }) => {
       if (currentUserId && userId === currentUserId) {
         const statePatch = {};
         PROFILE_STATE_KEYS.forEach((key) => {
-          if (patch[key] !== undefined) statePatch[key] = patch[key];
+          if (normalizedPatch[key] !== undefined) statePatch[key] = normalizedPatch[key];
         });
 
         if (Object.keys(statePatch).length > 0) {
@@ -204,13 +217,16 @@ export const ProfilesProvider = ({ children }) => {
 
       try {
         const profile = await appwriteService.getPublicProfile(userId);
-        mergeProfiles({ [userId]: profile });
+        setProfiles((current) => ({
+          ...current,
+          [userId]: decorateProfile(profile || {}, userId),
+        }));
         return profile;
       } catch (error) {
         return null;
       }
     },
-    [mergeProfiles],
+    [],
   );
 
   // Hydrate the signed-in user's public profile on boot and after sign-in.
@@ -262,37 +278,25 @@ export const ProfilesProvider = ({ children }) => {
       const isDelete = events.some((event) => event.endsWith(".delete"));
 
       if (isDelete) {
-        setProfiles((current) =>
-          current[userId]
-            ? {
-                ...current,
-                [userId]: {
-                  ...current[userId],
-                  hasProfile: false,
-                },
-              }
-            : current,
-        );
+        refreshProfile(userId);
         return;
       }
 
       const normalized = normalizeProfileDoc(document);
+      const preferred = selectPreferredProfile([
+        profilesRef.current[userId],
+        normalized,
+      ]);
 
-      setProfiles((current) => ({
-        ...current,
-        [userId]: {
-          ...(current[userId] || {}),
-          ...normalized,
-        },
-      }));
+      setProfiles((current) => ({ ...current, [userId]: preferred }));
 
       if (currentUserId && userId === currentUserId) {
         dispatch(
           updateUser({
-            name: normalized.name,
-            username: normalized.username,
-            bio: normalized.bio,
-            avatarFileId: normalized.avatarFileId,
+            name: preferred.name,
+            username: preferred.username,
+            bio: preferred.bio,
+            avatarFileId: preferred.avatarFileId,
           }),
         );
       }
@@ -319,7 +323,7 @@ export const ProfilesProvider = ({ children }) => {
         }
       });
     };
-  }, [currentUserId, dispatch]);
+  }, [currentUserId, dispatch, refreshProfile]);
 
   const value = useMemo(
     () => ({

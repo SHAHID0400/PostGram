@@ -13,6 +13,7 @@ import {
   Plus,
   PlusSquare,
   Sparkles,
+  ShieldCheck,
   UserRound,
   Users,
 } from "lucide-react";
@@ -35,6 +36,7 @@ export const DashboardSidebar = ({
   onLogout,
   loggingOut,
   onEditProfile,
+  isAdmin = false,
 }) => {
   const location = useLocation();
   const [createHover, setCreateHover] = useState(false);
@@ -105,6 +107,21 @@ export const DashboardSidebar = ({
           <Images className="h-[18px] w-[18px]" />
           Studio uploader
         </NavLink>
+        {isAdmin ? (
+          <NavLink
+            to="/admin"
+            className={({ isActive }) =>
+              `mt-2 flex items-center gap-3 rounded-xl border px-3.5 py-2.5 text-sm font-semibold transition ${
+                isActive
+                  ? "border-violet-300/40 bg-violet-500/20 text-violet-100 shadow-[0_0_20px_rgba(139,92,246,0.2)]"
+                  : "border-violet-300/20 bg-violet-500/10 text-violet-200 shadow-[0_0_14px_rgba(139,92,246,0.14)] hover:border-violet-300/40 hover:bg-violet-500/20"
+              }`
+            }
+          >
+            <ShieldCheck className="h-[18px] w-[18px]" />
+            Admin Control Hub
+          </NavLink>
+        ) : null}
       </nav>
 
       <div className="mt-auto space-y-3">

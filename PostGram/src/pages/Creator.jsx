@@ -61,7 +61,7 @@ const Creator = () => {
     ? avatarUrl(userData)
     : creatorProfile?.avatarUrl ||
       (creatorProfile?.avatarFileId
-        ? appwriteService.getFileView(creatorProfile.avatarFileId)
+        ? avatarUrl(creatorProfile)
         : "");
 
   return (

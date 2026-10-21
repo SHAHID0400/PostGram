@@ -17,6 +17,7 @@ export const App = () => {
   const isAuthExperience = ["/login", "/signup"].includes(location.pathname);
   const standaloneRoutes = [
     "/dashboard",
+    "/admin",
     "/studio",
     "/add-post",
     "/explore",
@@ -48,6 +49,7 @@ export const App = () => {
               $id: userData.$id,
               email: userData.email,
               name: userData.name,
+              labels: userData.labels || [],
               username: prefs.username || "",
               bio: prefs.bio || "",
               avatarFileId: prefs.avatarFileId || "",

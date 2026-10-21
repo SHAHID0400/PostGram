@@ -20,7 +20,7 @@ import { useProfiles } from "../context/ProfilesContext";
 import useRealtimeFeed from "../hooks/useRealtimeFeed";
 import ExplorePostModal from "../components/explore/ExplorePostModal";
 import { MobileDock } from "../components/dashboard/Sidebar";
-import { Avatar, timeAgo } from "../components/dashboard/ui";
+import { Avatar, avatarUrl, timeAgo } from "../components/dashboard/ui";
 
 const UserProfile = () => {
   const { userId } = useParams();
@@ -229,7 +229,6 @@ const UserProfile = () => {
       }
     : profile;
   const displayName = viewProfile?.name || "PostGram creator";
-  const avatarFileId = viewProfile?.avatarFileId || "";
   const username = String(viewProfile?.username || "").replace(/^@+/, "");
   const notFound =
     !loading &&
@@ -312,11 +311,7 @@ const UserProfile = () => {
                 <span className="block rounded-full bg-linear-to-br from-violet-500 via-fuchsia-500 to-cyan-400 p-[2px]">
                   <Avatar
                     name={displayName}
-                    src={
-                      avatarFileId
-                        ? appwriteService.getFileView(avatarFileId)
-                        : ""
-                    }
+                    src={avatarUrl(viewProfile)}
                     size="2xl"
                     className="ring-4 ring-night-soft"
                   />

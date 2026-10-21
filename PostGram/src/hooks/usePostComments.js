@@ -5,6 +5,7 @@ import { useProfiles } from "../context/ProfilesContext";
 import { toUserMessage } from "../lib/errors";
 import { sanitizeText } from "../lib/security";
 import { avatarUrl, parseComments } from "../components/dashboard/ui";
+import { getAvatarUrl } from "../utils/avatarHelper";
 
 const EMBEDDED_LIMIT = 4800;
 const MAX_COMMENT_LENGTH = 2000;
@@ -147,7 +148,7 @@ const usePostComments = ({ post, user, onEmbeddedComment }) => {
       if (profile?.avatarUrl) return profile.avatarUrl;
 
       const fileId = profile?.avatarFileId || comment?.userAvatarFileId;
-      return fileId ? appwriteService.getFileView(fileId) : "";
+      return getAvatarUrl({ avatarFileId: fileId });
     },
     [commenterProfile, user],
   );

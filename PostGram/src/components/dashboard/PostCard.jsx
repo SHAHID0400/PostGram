@@ -69,7 +69,7 @@ const PostCard = ({ post, user, authorProfile, onLike, onComment, onDelete }) =>
     ? avatarUrl(user)
     : authorProfile?.avatarUrl ||
       (authorProfile?.avatarFileId
-        ? appwriteService.getFileView(authorProfile.avatarFileId)
+      ? avatarUrl(authorProfile)
         : "");
   const imageUrl = post.featuredImage
     ? appwriteService.getFileView(post.featuredImage)

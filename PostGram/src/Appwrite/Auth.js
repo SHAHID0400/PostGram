@@ -143,6 +143,10 @@ export class AuthService {
         }
      }
 
+     async createJWT(){
+        return await this.account.createJWT();
+     }
+
      async updateName(name){
         return await this.account.updateName(name);
      }

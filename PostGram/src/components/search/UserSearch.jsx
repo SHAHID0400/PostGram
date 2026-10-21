@@ -141,7 +141,7 @@ const UserSearch = ({
                 const isSelf = person.userId === userData?.$id;
                 const name = person.name || "PostGram creator";
                 const avatarSrc = person.avatarFileId
-                  ? appwriteService.getFileView(person.avatarFileId)
+                  ? avatarUrl(person)
                   : isSelf
                     ? avatarUrl(userData)
                     : "";

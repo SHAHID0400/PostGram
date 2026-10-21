@@ -220,13 +220,16 @@ const Profile = () => {
         avatarFileId: uploadedId,
       });
 
-      await appwriteService.savePublicProfile({
+      const profileSaved = await appwriteService.savePublicProfile({
         userId: userData.$id,
         name: userData?.name || "",
         username: userData?.username || "",
         bio: userData?.bio || "",
         avatarFileId: uploadedId,
       });
+      if (!profileSaved) {
+        throw new Error("The avatar was uploaded but couldn't be saved to your profile.");
+      }
 
       dispatch(updateUser({ avatarFileId: uploadedId }));
       setProfile(userData.$id, {
@@ -298,13 +301,16 @@ const Profile = () => {
 
       // Persist the public-facing copy immediately so /profile/:userId and
       // chat resolution see the new handle without waiting for a refetch.
-      await appwriteService.savePublicProfile({
+      const profileSaved = await appwriteService.savePublicProfile({
         userId: userData.$id,
         name: values.cleanName,
         username: values.cleanUsername,
         bio: cleanBio,
         avatarFileId: userData?.avatarFileId || "",
       });
+      if (!profileSaved) {
+        throw new Error("Couldn't sync your profile changes. Please try again.");
+      }
 
       dispatch(
         updateUser({

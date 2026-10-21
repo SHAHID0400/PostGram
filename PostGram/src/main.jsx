@@ -14,6 +14,8 @@ const Home = lazy(() => import("./pages/Home.jsx"));
 const Login = lazy(() => import("./components/Login.jsx"));
 const Signup = lazy(() => import("./pages/SignUp.jsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.jsx"));
+const AdminControlHub = lazy(() => import("./components/admin/AdminControlHub.jsx"));
+const AdminRoute = lazy(() => import("./components/admin/AdminRoute.jsx"));
 const Explore = lazy(() => import("./pages/Explore.jsx"));
 const Profile = lazy(() => import("./pages/Profile.jsx"));
 const UserProfile = lazy(() => import("./pages/UserProfile.jsx"));
@@ -60,6 +62,16 @@ const router = createBrowserRouter([
         element: (
           <AuthLayout authentication>
             <Dashboard />
+          </AuthLayout>
+        ),
+      },
+      {
+        path: "/admin",
+        element: (
+          <AuthLayout authentication>
+            <AdminRoute>
+              <AdminControlHub />
+            </AdminRoute>
           </AuthLayout>
         ),
       },

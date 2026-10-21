@@ -1,5 +1,6 @@
 import conf from "../conf/confi";
 import { assertSafeImage, sanitizeIdList, sanitizeText } from "../lib/security";
+import { dedupeProfiles, selectPreferredProfile } from "../utils/profileResolver";
 import { Client, Account, ID, Databases, Storage, Query, Permission, Role } from "appwrite";
 
 const slugify = (value) =>
@@ -35,13 +36,20 @@ const cleanHandle = (value) =>
         .slice(0, 36);
 
 const profileNameOf = (profile) => profile?.name || profile?.displayName || "";
+const profileAvatarOf = (profile) =>
+    [profile?.avatarFileId, profile?.avatar, profile?.imageId]
+        .map((value) => String(value || "").trim())
+        .find(Boolean) || "";
 
 const normalizeProfile = (profile, fallbackUserId = "") => ({
+    $id: profile?.$id || "",
+    $createdAt: profile?.$createdAt || "",
+    $updatedAt: profile?.$updatedAt || "",
     userId: profile?.userId || fallbackUserId,
     name: profileNameOf(profile),
     username: cleanHandle(profile?.username),
     bio: profile?.bio || "",
-    avatarFileId: profile?.avatarFileId || "",
+    avatarFileId: profileAvatarOf(profile),
     hasProfile: Boolean(profile),
 });
 
@@ -363,35 +371,55 @@ export class Service {
     }
 
     // ── Batch profile lookup ──────────────────────────────────
-    async listProfilesByIds(userIds = []) {
+    async listProfileDocumentsByIds(userIds = []) {
         const ids = [...new Set((Array.isArray(userIds) ? userIds : []).filter(Boolean))];
-        const result = { profiles: {}, missingCollection: false };
+        const documents = [];
 
-        if (ids.length === 0) return result;
+        if (ids.length === 0) return documents;
 
         for (let index = 0; index < ids.length; index += 100) {
             const batch = ids.slice(index, index + 100);
+            let cursor = "";
 
-            try {
+            do {
+                const queries = [
+                    Query.equal("userId", batch),
+                    Query.limit(100),
+                    ...(cursor ? [Query.cursorAfter(cursor)] : []),
+                ];
                 const response = await this.Databases.listDocuments(
                     conf.appwriteDatabaseId,
                     this.profilesCollectionId,
-                    [
-                        Query.equal("userId", batch),
-                        Query.limit(batch.length),
-                    ],
+                    queries,
                 );
-
-                response.documents.forEach((document) => {
-                    const userId = document.userId || document.$id;
-                    if (userId) {
-                        result.profiles[userId] = normalizeProfile(document, userId);
-                    }
-                });
-            } catch (error) {}
+                const page = response.documents || [];
+                documents.push(...page);
+                cursor =
+                    page.length === 100 ? page[page.length - 1].$id : "";
+            } while (cursor);
         }
 
+        return documents;
+    }
+
+    async listProfilesByIds(userIds = []) {
+        const result = { profiles: {}, missingCollection: false };
+        const documents = await this.listProfileDocumentsByIds(userIds);
+
+        dedupeProfiles(documents).forEach((document) => {
+            const userId = document.userId || document.$id;
+            if (userId) {
+                result.profiles[userId] = normalizeProfile(document, userId);
+            }
+        });
+
         return result;
+    }
+
+    async getPreferredProfileDocument(userId) {
+        if (!userId) return null;
+        const documents = await this.listProfileDocumentsByIds([userId]);
+        return selectPreferredProfile(documents);
     }
 
     // ── Public profiles ────────────────────────────────────────
@@ -411,7 +439,7 @@ export class Service {
         const safeHandle = cleanHandle(sanitizeText(username, 36));
         const cleanBio = sanitizeText(bio, 160);
         const safeAvatar = String(avatarFileId || "");
-        
+
         const payload = {
             userId,
             username: safeHandle,
@@ -421,17 +449,13 @@ export class Service {
         };
 
         try {
-            const result = await this.Databases.listDocuments(
-                databaseId,
-                collectionId,
-                [Query.equal("userId", userId), Query.limit(1)],
-            );
+            const existing = await this.getPreferredProfileDocument(userId);
 
-            if (result.documents?.length > 0) {
+            if (existing) {
                 await this.Databases.updateDocument(
                     databaseId,
                     collectionId,
-                    result.documents[0].$id,
+                    existing.$id,
                     payload,
                 );
             } else {
@@ -452,14 +476,8 @@ export class Service {
         if (!userId) return null;
 
         try {
-            const result = await this.Databases.listDocuments(
-                conf.appwriteDatabaseId,
-                this.profilesCollectionId,
-                [Query.equal("userId", userId), Query.limit(1)],
-            );
-            if (result.documents?.[0]) {
-                return normalizeProfile(result.documents[0], userId);
-            }
+            const profile = await this.getPreferredProfileDocument(userId);
+            if (profile) return normalizeProfile(profile, userId);
         } catch (err) {}
 
         try {
@@ -512,7 +530,7 @@ export class Service {
                 [Query.limit(100)],
             );
 
-            profiles.documents.forEach((profile) => {
+            dedupeProfiles(profiles.documents || []).forEach((profile) => {
                 const userId = profile.userId || profile.$id;
                 if (!userId) return;
 
@@ -861,9 +879,30 @@ export class Service {
     }
 
     getFileView(fileId) {
+        if (!fileId) return "";
+        if (!conf.appwriteBucketId) {
+            throw new Error("VITE_APPWRITE_BUCKET_ID is not configured.");
+        }
         return this.bucket.getFileView(
             conf.appwriteBucketId,
-            fileId
+            fileId,
+        );
+    }
+
+    getAvatarPreview(fileId) {
+        return this.getFilePreview(fileId);
+    }
+
+    getFilePreview(fileId) {
+        if (!fileId) return "";
+        if (!conf.appwriteBucketId) {
+            throw new Error("VITE_APPWRITE_BUCKET_ID is not configured.");
+        }
+        return this.bucket.getFilePreview(
+            conf.appwriteBucketId,
+            fileId,
+            256,
+            256,
         );
     }
 }

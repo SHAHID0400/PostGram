@@ -8,6 +8,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
   Sparkles,
   Wifi,
   WifiOff,
@@ -16,6 +17,7 @@ import {
 import appwriteService from "../Appwrite/config";
 import { toUserMessage } from "../lib/errors";
 import authService from "../Appwrite/Auth";
+import { useProfiles } from "../context/ProfilesContext";
 import { logout } from "../store/authSlice";
 import logo from "../assets/plogo.png";
 import PostCard from "../components/dashboard/PostCard";
@@ -42,6 +44,8 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const routerLocation = useLocation();
   const userData = useSelector((state) => state.auth?.userData);
+  const isAdmin = useSelector((state) => state.auth?.isAdmin);
+  const { profiles, ensureProfiles } = useProfiles();
 
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -235,9 +239,13 @@ const Dashboard = () => {
       if (existing) {
         existing.feedCount += 1;
       } else {
+        const profile = profiles[post.userId];
         map.set(post.userId, {
           userId: post.userId,
-          name: post.name || "PostGram creator",
+          name: profile?.name || post.name || "PostGram creator",
+          avatarFileId: profile?.avatarFileId || "",
+          avatarUrl: profile?.avatarUrl || "",
+          username: profile?.username || "",
           feedCount: 1,
         });
       }
@@ -246,9 +254,22 @@ const Dashboard = () => {
     return [...map.values()]
       .sort((first, second) => second.feedCount - first.feedCount)
       .slice(0, 3);
-  }, [posts, userData?.$id]);
+  }, [posts, profiles, userData?.$id]);
 
   const creatorKey = creators.map((creator) => creator.userId).join("|");
+
+  useEffect(() => {
+    if (creatorKey) ensureProfiles(creatorKey.split("|"));
+  }, [creatorKey, ensureProfiles]);
+
+  const authorKey = useMemo(
+    () => [...new Set(posts.map((post) => post.userId).filter(Boolean))].join("|"),
+    [posts],
+  );
+
+  useEffect(() => {
+    if (authorKey) ensureProfiles(authorKey.split("|"));
+  }, [authorKey, ensureProfiles]);
 
   // Fetch each creator's real published-moment count.
   useEffect(() => {
@@ -568,6 +589,7 @@ const Dashboard = () => {
 
       <DashboardSidebar
         user={userData}
+        isAdmin={isAdmin}
         postCount={myPostCount}
         onCreate={() => setComposerOpen(true)}
         onShowMine={toggleMine}
@@ -597,6 +619,15 @@ const Dashboard = () => {
 
             <div className="ml-auto hidden items-center gap-2 md:flex">
               <UserSearch className="w-52 lg:w-64" />
+              {isAdmin ? (
+                <Link
+                  to="/admin"
+                  className="inline-flex items-center gap-2 rounded-full border border-violet-300/30 bg-violet-500/15 px-3 py-2 text-xs font-semibold text-violet-100 shadow-[0_0_18px_rgba(139,92,246,0.25)] transition hover:border-violet-200/60 hover:bg-violet-500/25"
+                >
+                  <ShieldCheck className="h-4 w-4 text-violet-200" />
+                  Admin Control Hub
+                </Link>
+              ) : null}
               <span
                 className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium ${liveBadge.className}`}
               >
@@ -647,7 +678,21 @@ const Dashboard = () => {
           </div>
 
           <div className="border-t border-white/[0.05] px-4 py-2 md:hidden">
-            <UserSearch placeholder="Search creators or @username" />
+            <div className="flex items-center gap-2">
+              <UserSearch
+                placeholder="Search creators or @username"
+                className="min-w-0 flex-1"
+              />
+              {isAdmin ? (
+                <Link
+                  to="/admin"
+                  aria-label="Open Admin Control Hub"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-violet-300/30 bg-violet-500/15 text-violet-200 shadow-[0_0_16px_rgba(139,92,246,0.24)]"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                </Link>
+              ) : null}
+            </div>
           </div>
         </header>
 
@@ -800,6 +845,7 @@ const Dashboard = () => {
                         key={post.$id}
                         post={post}
                         user={userData}
+                        authorProfile={profiles[post.userId]}
                         onLike={handleLike}
                         onComment={handleComment}
                         onDelete={handleDelete}

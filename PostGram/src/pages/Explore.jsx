@@ -409,11 +409,9 @@ const Explore = () => {
                           isSelf
                             ? avatarUrl(userData)
                             : creator.avatarUrl ||
-                              (creator.avatarFileId
-                                ? appwriteService.getFileView(
-                                    creator.avatarFileId,
-                                  )
-                                : "")
+                            (creator.avatarFileId
+                              ? avatarUrl(creator)
+                              : "")
                         }
                         size="lg"
                         className="ring-2 ring-night"
@@ -568,9 +566,7 @@ const Explore = () => {
                             ? avatarUrl(userData)
                             : authorProfile?.avatarUrl ||
                               (authorProfile?.avatarFileId
-                                ? appwriteService.getFileView(
-                                    authorProfile.avatarFileId,
-                                  )
+                                ? avatarUrl(authorProfile)
                                 : "")
                         }
                         size="md"

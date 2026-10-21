@@ -65,7 +65,7 @@ const ExplorePostModal = ({ post, user, authorProfile, onClose, onUpdate }) => {
     ? avatarUrl(user)
     : authorProfile?.avatarUrl ||
       (authorProfile?.avatarFileId
-        ? appwriteService.getFileView(authorProfile.avatarFileId)
+      ? avatarUrl(authorProfile)
         : "");
   const caption = stripHtml(post.content) || stripHtml(post.title);
 

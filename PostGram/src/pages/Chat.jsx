@@ -20,7 +20,7 @@ import conf from "../conf/confi";
 import { toUserMessage } from "../lib/errors";
 import { useProfiles } from "../context/ProfilesContext";
 import { MobileDock } from "../components/dashboard/Sidebar";
-import { Avatar, timeAgo } from "../components/dashboard/ui";
+import { Avatar, avatarUrl, timeAgo } from "../components/dashboard/ui";
 
 const collectionMissing = (error) =>
   error?.code === 404 ||
@@ -646,7 +646,7 @@ const Chat = () => {
                     const avatarSrc =
                       person?.avatarUrl ||
                       (person?.avatarFileId
-                        ? appwriteService.getFileView(person.avatarFileId)
+                        ? avatarUrl(person)
                         : "");
                     const active = conversation.userId === recipientId;
                     const isMine = conversation.message.senderId === userData?.$id;
@@ -743,9 +743,7 @@ const Chat = () => {
                           name={headerAvatarName}
                           src={
                             headerProfile?.avatarFileId
-                              ? appwriteService.getFileView(
-                                  headerProfile.avatarFileId,
-                                )
+                              ? avatarUrl(headerProfile)
                               : ""
                           }
                           size="md"

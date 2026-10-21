@@ -192,6 +192,22 @@ export const CommentsProvider = ({ children }) => {
     [writePostComments],
   );
 
+  const upsertComment = useCallback(
+    (comment) => {
+      const postId = comment?.postId;
+      if (!postId || !comment?.$id) return;
+      loadedRef.current.add(postId);
+      const normalized = normalizeCommentDoc(comment);
+      writePostComments(postId, (existing) => {
+        const withoutDuplicate = existing.filter(
+          (row) => row.$id !== normalized.$id,
+        );
+        return sortNewestFirst([normalized, ...withoutDuplicate]);
+      });
+    },
+    [writePostComments],
+  );
+
   // Realtime: comments created, edited or deleted anywhere reach every client.
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
@@ -269,6 +285,7 @@ export const CommentsProvider = ({ children }) => {
       addOptimisticComment,
       replaceComment,
       removeComment,
+      upsertComment,
     }),
     [
       commentsByPost,
@@ -278,6 +295,7 @@ export const CommentsProvider = ({ children }) => {
       addOptimisticComment,
       replaceComment,
       removeComment,
+      upsertComment,
     ],
   );
 
