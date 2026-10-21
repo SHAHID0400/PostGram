@@ -184,10 +184,58 @@ const AdminControlHub = () => {
 
     keepSubscription(
       (callback) => appwriteService.subscribeToProfiles(callback),
-      (event) => {
+      async (event) => {
         const profile = event?.payload;
         const profileUserId = profile?.userId || profile?.$id;
         if (!profileUserId) return;
+        const deleted = event.events?.some((name) => name.endsWith(".delete"));
+        if (deleted) {
+          try {
+            const remaining = await appwriteService.getPreferredProfileDocument(
+              profileUserId,
+            );
+            if (!active) return;
+            if (!remaining) {
+              setUsers((current) =>
+                current.filter((person) => person.userId !== profileUserId),
+              );
+              if (selectedUserIdValue === profileUserId) {
+                setSelectedUserId("");
+                setProfileForm(null);
+                setPosts([]);
+                setComments([]);
+                setTotalPosts(0);
+                setTotalComments(0);
+              }
+              return;
+            }
+            setUsers((current) =>
+              current.map((person) =>
+                person.userId === profileUserId
+                  ? {
+                      ...person,
+                      name: remaining.displayName || remaining.name || person.name,
+                      displayName:
+                        remaining.displayName ||
+                        remaining.name ||
+                        person.displayName,
+                      username: remaining.username || "",
+                      bio: remaining.bio || "",
+                      avatarFileId:
+                        remaining.avatarFileId ||
+                        remaining.avatar ||
+                        remaining.imageId ||
+                        "",
+                      profileId: remaining.$id,
+                    }
+                  : person,
+              ),
+            );
+          } catch (requestError) {
+            if (active) setError(requestError.message);
+          }
+          return;
+        }
         setUsers((current) =>
           current.map((person) =>
             person.userId === profileUserId
@@ -586,6 +634,71 @@ const AdminControlHub = () => {
       setTotalComments((current) => current + 1);
       upsertComment(comment);
       setError(requestError.message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const deleteUser = async (person) => {
+    if (!person?.userId || !person?.profileId || person.userId === user?.$id) {
+      setError("Select a different user with a valid profile document.");
+      return;
+    }
+
+    setBusy("user");
+    setError("");
+    try {
+      const result = await adminRequest("delete-user", {
+        userId: person.userId,
+        profileId: person.profileId,
+      });
+      if (result?.success !== true || result?.purged !== true) {
+        throw new Error("Appwrite did not confirm that the user data was fully purged.");
+      }
+      comments.forEach((comment) =>
+        removeComment(comment.postId, comment.$id),
+      );
+      setUsers((current) =>
+        current.filter((item) => item.userId !== person.userId),
+      );
+      setSummary((current) =>
+        current
+          ? {
+              ...current,
+              totalUsers: Math.max(0, current.totalUsers - 1),
+              totalPosts: Math.max(0, current.totalPosts - result.deletedPosts),
+              totalComments: Math.max(
+                0,
+                current.totalComments - result.deletedComments,
+              ),
+            }
+          : current,
+      );
+      setSelectedUserId("");
+      setProfileForm(null);
+      setPosts([]);
+      setComments([]);
+      setPostsCursor("");
+      setCommentsCursor("");
+      setTotalPosts(0);
+      setTotalComments(0);
+      setEditingPost(null);
+      setEditingComment(null);
+      setAvatarPreview("");
+      setConfirm(null);
+      setNotice(
+        `User data deleted: ${result.deletedPosts} moment(s), ${result.deletedComments} comment(s), and ${result.deletedProfiles} profile document(s).`,
+      );
+      if (result.warnings?.length) setError(result.warnings.join(" "));
+    } catch (requestError) {
+      setError(requestError.message);
+      try {
+        const result = await adminRequest("list-users");
+        setUsers(dedupeProfiles(result.users));
+        setUsersCursor(result.nextCursor);
+      } catch (refreshError) {
+        setError(`${requestError.message} User list refresh failed: ${refreshError.message}`);
+      }
     } finally {
       setBusy("");
     }
@@ -1109,6 +1222,26 @@ const AdminControlHub = () => {
                       </div>
                     </div>
                   </form>
+
+                  <div className="relative z-10 mt-7 flex flex-col gap-3 rounded-2xl border border-rose-500/25 bg-rose-500/[0.06] p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-bold text-rose-200">
+                        Permanently delete this user’s PostGram data
+                      </p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                        Removes moments, comments, profile documents, and unshared media. The Appwrite sign-in identity is not deleted by the client API.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setConfirm({ type: "user", item: selectedUser })}
+                      disabled={Boolean(busy) || selectedUserIsCurrent}
+                      className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-rose-400/30 bg-rose-500/15 px-4 py-2.5 text-xs font-bold text-rose-200 transition hover:border-rose-300/50 hover:bg-rose-500/25 disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Trash2 size={14} />
+                      Delete User Account
+                    </button>
+                  </div>
                 </motion.section>
 
                 {/* Activity Feed Section */}
@@ -1428,16 +1561,21 @@ const AdminControlHub = () => {
                   <Trash2 size={22} />
                 </div>
                 <h2 id="admin-delete-title" className="text-base font-bold text-white">
-                  Purge {confirm.type === "post" ? "Moment Payload" : "Comment Node"}?
+                  {confirm.type === "user"
+                    ? `Delete ${confirm.item.displayName || confirm.item.name || "this user"}’s account data?`
+                    : `Purge ${confirm.type === "post" ? "Moment Payload" : "Comment Node"}?`}
                 </h2>
               </div>
               <p className="text-xs leading-relaxed text-slate-300 font-medium">
-                This action is irreversible and executes a permanent deletion across the database matrix. Realtime telemetry will broadcast the removal instantly.
+                {confirm.type === "user"
+                  ? "This permanently deletes the user's moments, comments, profile documents, and media that is not shared elsewhere. The Appwrite sign-in identity remains and must be removed separately using a trusted server-side Users API."
+                  : "This action is irreversible and executes a permanent deletion across the database matrix. Realtime telemetry will broadcast the removal instantly."}
               </p>
               <div className="mt-6 flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setConfirm(null)}
+                  disabled={busy === "user"}
                   className="rounded-xl px-4 py-2.5 text-xs font-bold text-slate-300 hover:bg-white/5 transition"
                 >
                   Abort
@@ -1446,13 +1584,24 @@ const AdminControlHub = () => {
                   type="button"
                   disabled={Boolean(busy)}
                   onClick={() =>
-                    confirm.type === "post"
-                      ? deletePost(confirm.item)
-                      : deleteComment(confirm.item)
+                    confirm.type === "user"
+                      ? deleteUser(confirm.item)
+                      : confirm.type === "post"
+                        ? deletePost(confirm.item)
+                        : deleteComment(confirm.item)
                   }
                   className="rounded-xl bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 px-5 py-2.5 text-xs font-bold text-white shadow-lg shadow-rose-600/30 transition disabled:opacity-50"
                 >
-                  Confirm Purge
+                  {busy === "user" ? (
+                    <span className="inline-flex items-center gap-2">
+                      <LoaderCircle size={14} className="animate-spin" />
+                      Deleting user data…
+                    </span>
+                  ) : confirm.type === "user" ? (
+                    "Permanently Delete User"
+                  ) : (
+                    "Confirm Purge"
+                  )}
                 </button>
               </div>
             </motion.section>

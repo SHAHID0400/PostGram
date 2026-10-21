@@ -20,11 +20,116 @@ const dedupeDocuments = (documents) => {
   return [...uniqueDocuments.values()];
 };
 
+const listAllDocuments = async (collectionId, queries = []) => {
+  const documents = [];
+  let cursor = "";
+
+  do {
+    const page = await appwriteService.Databases.listDocuments(
+      conf.appwriteDatabaseId,
+      collectionId,
+      [
+        ...queries,
+        Query.limit(PAGE_SIZE),
+        ...(cursor ? [Query.cursorAfter(cursor)] : []),
+      ],
+    );
+    const pageDocuments = page.documents || [];
+    documents.push(...pageDocuments);
+    cursor =
+      pageDocuments.length === PAGE_SIZE
+        ? pageDocuments.at(-1).$id
+        : "";
+  } while (cursor);
+
+  return dedupeDocuments(documents);
+};
+
+const listAllDocumentsByValues = async (collectionId, attribute, values) => {
+  const results = [];
+  const uniqueValues = [...new Set(values.filter(Boolean))];
+
+  for (let index = 0; index < uniqueValues.length; index += PAGE_SIZE) {
+    results.push(
+      ...(await listAllDocuments(collectionId, [
+        Query.equal(attribute, uniqueValues.slice(index, index + PAGE_SIZE)),
+      ])),
+    );
+  }
+
+  return dedupeDocuments(results);
+};
+
+const deleteDocuments = async (collectionId, documents) => {
+  const failures = [];
+  const batchSize = 20;
+
+  for (let index = 0; index < documents.length; index += batchSize) {
+    const batch = documents.slice(index, index + batchSize);
+    const results = await Promise.allSettled(
+      batch.map((document) =>
+        appwriteService.Databases.deleteDocument(
+          conf.appwriteDatabaseId,
+          collectionId,
+          document.$id,
+        ),
+      ),
+    );
+
+    results.forEach((result, batchIndex) => {
+      if (result.status === "rejected") {
+        failures.push({
+          id: batch[batchIndex].$id,
+          error: result.reason?.message || "Unknown Appwrite error",
+        });
+      }
+    });
+  }
+
+  return failures;
+};
+
+const getProfileAvatarId = (profile) =>
+  [profile?.avatarFileId, profile?.avatar, profile?.imageId]
+    .map((value) => String(value || "").trim())
+    .find(Boolean) || "";
+
+const isMissingStorageFile = (error) => {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    Number(error?.code) === 404 ||
+    /file[^.]*not found|file[^.]*could not be found|file[^.]*does not exist|not be found/.test(
+      message,
+    )
+  );
+};
+
+const deleteStorageFileIfPresent = async (fileId) => {
+  if (!fileId) return { deleted: false, missing: false };
+  if (!conf.appwriteBucketId) {
+    throw new Error("VITE_APPWRITE_BUCKET_ID is not configured.");
+  }
+
+  try {
+    await appwriteService.bucket.deleteFile(conf.appwriteBucketId, fileId);
+    return { deleted: true, missing: false };
+  } catch (error) {
+    if (!isMissingStorageFile(error)) throw error;
+
+    console.warn(
+      "Storage file already missing or previously purged:",
+      fileId,
+    );
+    return { deleted: false, missing: true };
+  }
+};
+
 const assertAdminSession = async () => {
   const account = await authService.getcurrentUser();
   if (!account?.labels?.includes("admin")) {
     throw new Error("An active Appwrite admin session is required.");
   }
+  return account;
 };
 
 const mapProfile = (profile) => ({
@@ -266,21 +371,158 @@ const deletePost = async (payload) => {
     payload.postId,
   );
   let mediaDeleted = !post.featuredImage;
+  let mediaMissing = false;
   if (post.featuredImage && !mediaIsShared && !mediaReferenceCheckUnavailable) {
-    try {
-      await appwriteService.bucket.deleteFile(
-        conf.appwriteBucketId,
-        post.featuredImage,
-      );
-      mediaDeleted = true;
-    } catch {
-      mediaDeleted = false;
-    }
+    const result = await deleteStorageFileIfPresent(post.featuredImage);
+    mediaDeleted = result.deleted || result.missing;
+    mediaMissing = result.missing;
   }
   return {
     deleted: true,
     mediaDeleted,
+    mediaMissing,
     mediaRetained: mediaIsShared || mediaReferenceCheckUnavailable,
+  };
+};
+
+const deleteUser = async (payload, adminAccount) => {
+  const userId = String(payload.userId || "").trim();
+  const profileId = String(payload.profileId || "").trim();
+  if (!userId || !profileId) {
+    throw new Error("Both the selected user ID and profile document ID are required.");
+  }
+  if (adminAccount?.$id === userId) {
+    throw new Error("You cannot delete the account you are currently using.");
+  }
+
+  const userIds = uniqueIds(userId, profileId);
+  const [posts, authoredComments, profiles] = await Promise.all([
+    listAllDocuments(
+      conf.appwriteCollectionId,
+      [Query.equal("userId", userIds)],
+    ),
+    listAllDocuments(
+      appwriteService.commentsCollectionId,
+      [Query.equal("userId", userIds)],
+    ),
+    listAllDocuments(
+      appwriteService.profilesCollectionId,
+      [Query.equal("userId", userIds)],
+    ),
+  ]);
+  const commentsOnOwnedPosts = await listAllDocumentsByValues(
+    appwriteService.commentsCollectionId,
+    "postId",
+    posts.map((post) => post.$id),
+  );
+  const comments = dedupeDocuments([
+    ...authoredComments,
+    ...commentsOnOwnedPosts,
+  ]);
+
+  const profileDocumentIds = new Set(profiles.map((profile) => profile.$id));
+  if (!profileDocumentIds.has(profileId)) {
+    const selectedProfile = await appwriteService.Databases.getDocument(
+      conf.appwriteDatabaseId,
+      appwriteService.profilesCollectionId,
+      profileId,
+    );
+    if (
+      selectedProfile.userId &&
+      !userIds.includes(String(selectedProfile.userId))
+    ) {
+      throw new Error("The selected profile document does not belong to this user.");
+    }
+    profiles.push(selectedProfile);
+    profileDocumentIds.add(selectedProfile.$id);
+  }
+
+  const mediaIds = new Set(
+    [
+      ...posts.map((post) => post.featuredImage),
+      ...profiles.map(getProfileAvatarId),
+    ]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  );
+
+  const commentFailures = await deleteDocuments(
+    appwriteService.commentsCollectionId,
+    comments,
+  );
+  const postFailures = await deleteDocuments(
+    conf.appwriteCollectionId,
+    posts,
+  );
+  if (commentFailures.length || postFailures.length) {
+    const failedCount = commentFailures.length + postFailures.length;
+    throw new Error(
+      `Deletion stopped after partially removing user data: ${failedCount} comment/post document(s) could not be deleted. The profile was retained; retry after correcting Appwrite permissions or document errors.`,
+    );
+  }
+
+  const profileFailures = await deleteDocuments(
+    appwriteService.profilesCollectionId,
+    [...profileDocumentIds].map(($id) => ({ $id })),
+  );
+  if (profileFailures.length) {
+    throw new Error(
+      `Posts and comments were deleted, but ${profileFailures.length} profile document(s) could not be deleted. Retry after correcting Appwrite permissions or document errors.`,
+    );
+  }
+
+  const warnings = [];
+  let missingMediaFiles = 0;
+  if (mediaIds.size) {
+    let remainingProfileMedia;
+    try {
+      const remainingProfiles = await listAllDocuments(
+        appwriteService.profilesCollectionId,
+      );
+      remainingProfileMedia = new Set(
+        remainingProfiles.map(getProfileAvatarId).filter(Boolean),
+      );
+    } catch (error) {
+      warnings.push(
+        `Media cleanup was skipped because shared-file references could not be checked: ${error?.message || "Appwrite query failed"}`,
+      );
+    }
+
+    if (remainingProfileMedia) {
+      for (const fileId of mediaIds) {
+        let isStillReferenced;
+        try {
+          const remainingPosts = await appwriteService.Databases.listDocuments(
+            conf.appwriteDatabaseId,
+            conf.appwriteCollectionId,
+            [Query.equal("featuredImage", fileId), Query.limit(1)],
+          );
+          isStillReferenced =
+            Boolean(remainingPosts.documents?.length) ||
+            remainingProfileMedia.has(fileId);
+        } catch (error) {
+          warnings.push(
+            `Media file ${fileId} was retained because shared references could not be checked: ${error?.message || "Appwrite query failed"}`,
+          );
+          continue;
+        }
+        if (isStillReferenced) continue;
+
+        const result = await deleteStorageFileIfPresent(fileId);
+        if (result.missing) missingMediaFiles += 1;
+      }
+    }
+  }
+
+  return {
+    success: true,
+    purged: true,
+    deleted: true,
+    deletedPosts: posts.length,
+    deletedComments: comments.length,
+    deletedProfiles: profileDocumentIds.size,
+    missingMediaFiles,
+    warnings,
   };
 };
 
@@ -325,7 +567,7 @@ const uploadAvatar = async (payload) => {
 };
 
 const directRequest = async (action, payload) => {
-  await assertAdminSession();
+  const adminAccount = await assertAdminSession();
   switch (action) {
     case "summary":
       return getSummary();
@@ -339,6 +581,8 @@ const directRequest = async (action, payload) => {
       return updatePost(payload);
     case "delete-post":
       return deletePost(payload);
+    case "delete-user":
+      return deleteUser(payload, adminAccount);
     case "update-comment": {
       const text = sanitizeText(payload.text, 2000);
       if (!text) throw new Error("Comment text cannot be empty.");
